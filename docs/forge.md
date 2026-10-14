@@ -19,5 +19,4 @@ Rules:
 - **Independent gates:** a library builds and tests on its own, with consumer validation recorded separately.
 - **No umbrella framework:** compose small libraries in the consumer.
 
-The same rule governs the [Kismo platform](ecosystem.md): KismoCore and KismoEngine are extracted from
-proven code in Pouncer, PhantomFlow and Crucible.
+Downstream projects apply the same rule to their own layers; see [who uses Sub0](users.md).
