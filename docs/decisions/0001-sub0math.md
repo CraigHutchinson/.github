@@ -135,6 +135,6 @@ makeBox(1_m, 5_m, 6_m);                       // compile error: role not named
 
 ## Follow-ups
 
-- Primitive shapes and their purposes (bounding, collision, render meshes): see the shapes proposal.
+- Primitive shapes and their purposes (bounding, collision, render meshes): [ADR 0002](0002-shapes.md).
 - Station setups in BikeDynamics move to quantities and roles.
 - Sub0HexGrid adopts `Point2d`, coordinated with Crucible's pin.
