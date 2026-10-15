@@ -15,7 +15,7 @@ exact pins (CPM). Copyright Craig Hutchinson.
 | [Sub0Reflect](https://github.com/CraigHutchinson/Sub0Reflect) | Parser-less compile-time reflection (C++17) | MIT | — |
 | [Sub0Llm](https://github.com/CraigHutchinson/Sub0Llm) | LLM runtime experiments and storage stack | **none yet** | — |
 | [Sub0h264](https://github.com/CraigHutchinson/Sub0h264) | H.264 decoding (see its patent notice) | MIT | — |
-| [Sub0Physics](https://github.com/CraigHutchinson/Sub0Physics) | Physics primitives (bodies, constraints, contact, integrators) and their verification framework (analytical references, error, convergence, replay); no domain models | MIT | BikeLab (source, being extracted); PhantomFlow (planned) |
+| [Sub0Physics](https://github.com/CraigHutchinson/Sub0Physics) | Physics primitives and their verification: transactional RK4/midpoint integrators, spring/damper and contact elements, closed-form references, energy/error/convergence checks, terrain clearance, fidelity (LOD) selection, profiling tooling; no domain models. First primitives ported from [BikeLab](https://github.com/CraigHutchinson/BikeLab) | MIT | BikeDynamics (KismoTech) |
 | Sub0Dsp *(planned)* | FFT, windows, filters, fixed-point, feature building blocks | MIT (planned) | Kismo products (first DSP need) |
 
 ## Known gaps

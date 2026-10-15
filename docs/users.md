@@ -14,11 +14,10 @@ flowchart BT
     Mem[Sub0MemPage]
     Cache[Sub0TieredCache]
     Dsp["Sub0Dsp (planned)"]
-    Phys["Sub0Physics (new)"]
+    Phys[Sub0Physics]
   end
 
   Llm[Sub0Llm]
-  BikeLab["BikeLab<br/>(bike physics lab)"]
   Crucible["Crucible<br/>(game, the forge)"]
 
   subgraph kismo["KismoTech"]
@@ -26,6 +25,7 @@ flowchart BT
     Engine[KismoEngine]
     Fw["Kismo firmware runtime"]
     Pouncer[Pouncer]
+    BikeDyn[BikeDynamics]
     PF[PhantomFlow]
   end
 
@@ -50,8 +50,8 @@ flowchart BT
   Fw -.-> PF
   Engine -.-> PF
   Engine -.-> Crucible
-  Phys -.-> BikeLab
-  Phys -.-> PF
+  Phys --> BikeDyn
+  BikeDyn -.-> PF
 ```
 
 Solid arrows are current, pinned use; dashed arrows are planned. Read each arrow as "is used by".
@@ -60,9 +60,9 @@ Solid arrows are current, pinned use; dashed arrows are planned. Read each arrow
 |---|---|---|
 | [Crucible](https://github.com/CraigHutchinson/Crucible) | Pub, Log, Pipeline, ECS, HexGrid | Its [reuse catalog](https://github.com/CraigHutchinson/Crucible/blob/main/docs/reuse/README.md) and [Sub0 roadmap](https://github.com/CraigHutchinson/Crucible/blob/main/docs/reuse/sub0-roadmap.md) |
 | [Sub0Llm](https://github.com/CraigHutchinson/Sub0Llm) | MemPage, TieredCache | Its storage stack plan |
-| [BikeLab](https://github.com/CraigHutchinson/BikeLab) | Physics (planned; the primitives are proven here first) | Its [physics fidelity architecture](https://github.com/CraigHutchinson/BikeLab/blob/main/docs/PHYSICS_FIDELITY.md) |
 | Pouncer ([pouncer.uk](https://pouncer.uk)) | Pub, Log, Pipeline | A KismoTech product |
+| BikeDynamics (KismoTech, private) | Physics | [KismoTech docs](https://github.com/KismoTech/.github/blob/main/docs/repositories.md) |
 | [KismoCore](https://github.com/KismoTech/KismoCore), [KismoEngine](https://github.com/KismoTech/KismoEngine) | Planned | [KismoTech docs](https://github.com/KismoTech/.github/tree/main/docs) |
-| PhantomFlow ([site](https://kismotech.github.io/PhantomFlow.uk/)) | Via the Kismo platform; Physics, under its own bike solvers (planned) | A KismoTech product |
+| PhantomFlow ([site](https://kismotech.github.io/PhantomFlow.uk/)) | Via the Kismo platform and BikeDynamics (planned) | A KismoTech product |
 
 Using a Sub0 library in your project? Open an issue in this repository to be listed.
