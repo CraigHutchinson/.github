@@ -15,8 +15,8 @@ exact pins (CPM). Copyright Craig Hutchinson.
 | [Sub0Reflect](https://github.com/CraigHutchinson/Sub0Reflect) | Parser-less compile-time reflection (C++17) | MIT | — |
 | [Sub0Llm](https://github.com/CraigHutchinson/Sub0Llm) | LLM runtime experiments and storage stack | **none yet** | — |
 | [Sub0h264](https://github.com/CraigHutchinson/Sub0h264) | H.264 decoding (see its patent notice) | MIT | — |
-| [Sub0Physics](https://github.com/CraigHutchinson/Sub0Physics) | Physics primitives and their verification: transactional RK4/midpoint integrators, spring/damper and contact elements, closed-form references, energy/error/convergence checks, terrain clearance, fidelity (LOD) selection, profiling tooling; no domain models. First primitives ported from [BikeLab](https://github.com/CraigHutchinson/BikeLab) | MIT | BikeDynamics (KismoTech) |
-| Sub0Math *(proposed, [ADR 0001](decisions/0001-sub0math.md))* | Shared math vocabulary: vectors, matrices, quaternions, number types, light SI units and named argument roles | MIT (planned) | Sub0Physics, Sub0HexGrid, KismoEngine, Crucible, BikeDynamics (planned) |
+| [Sub0Physics](https://github.com/CraigHutchinson/Sub0Physics) | Physics primitives and their verification: transactional RK4/midpoint integrators, spring/damper and contact elements, closed-form references, energy/error/convergence checks, terrain clearance, fidelity (LOD) selection, ITT profiling markers; typed interfaces on Sub0Math; no domain models. First primitives ported from [BikeLab](https://github.com/CraigHutchinson/BikeLab) | MIT | BikeDynamics (KismoTech) |
+| [Sub0Math](https://github.com/CraigHutchinson/Sub0Math) | Shared math vocabulary: vectors, points, matrices, quaternions, rigid transforms, dimensioned quantities (float by default, `f64` by choice) and named argument roles; hosts the family performance tooling. [ADR 0001](decisions/0001-sub0math.md) | MIT | Sub0Physics, BikeDynamics; KismoEngine, Crucible, Sub0HexGrid (planned) |
 | Sub0Dsp *(planned)* | FFT, windows, filters, fixed-point, feature building blocks | MIT (planned) | Kismo products (first DSP need) |
 
 ## Known gaps

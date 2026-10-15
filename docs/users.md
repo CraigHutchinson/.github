@@ -15,6 +15,7 @@ flowchart BT
     Cache[Sub0TieredCache]
     Dsp["Sub0Dsp (planned)"]
     Phys[Sub0Physics]
+    Math[Sub0Math]
   end
 
   Llm[Sub0Llm]
@@ -50,7 +51,10 @@ flowchart BT
   Fw -.-> PF
   Engine -.-> PF
   Engine -.-> Crucible
+  Math --> Phys
   Phys --> BikeDyn
+  Math -.-> Engine
+  Math -.-> Crucible
   BikeDyn -.-> PF
 ```
 

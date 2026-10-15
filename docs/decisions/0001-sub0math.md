@@ -1,6 +1,6 @@
 # 0001: Sub0Math, shared math vocabulary with light units and named roles
 
-- **Status:** Proposed (2026-10-15); accepted once the open questions below are answered
+- **Status:** Accepted (2026-10-15). Implemented in [Sub0Math](https://github.com/CraigHutchinson/Sub0Math)
 - **Owner:** Craig Hutchinson
 - **Applies to:** every Sub0 library, and to KismoTech projects through them (KismoCore, KismoEngine,
   KismoEdge, BikeDynamics, products), and Crucible
@@ -66,8 +66,14 @@ double raw = height;                 // compile error: no implicit unwrap
 - **Zero overhead:** `Quantity<D, double>` is the size of a `double`, trivially copyable, and
   `constexpr`. Every rule is pinned by compile-time tests, including tests that the wrong operations
   do not compile (`static_assert(!requires { Length{} + Time{}; })`).
-- **Representation is a parameter:** `double` by default; `float` for rendering; a fixed-point type for
-  firmware when KismoEdge needs it.
+- **Representation is a parameter, float by default.** Unqualified names and the `_m`-style literals are
+  float (rendering, GPU data, firmware with single-precision FPUs, most interfaces). `sub0math::f64` holds
+  double aliases and literals for simulation state, accumulated time, world positions and energy budgets
+  (BikeLab's float32 solver trial reversed step-refinement trends; a float clock cannot resolve 0.5 ms
+  after a few hours). Float widens to double implicitly; double narrows only explicitly. Fixed point
+  follows with KismoEdge.
+- **Units are exact ratios to SI** (millimetres = 1/1000, degrees = pi/180), so conversions round once:
+  `millimetres(350.0)` is exactly the double nearest 0.35.
 - `std::chrono` stays for wall-clock and scheduling time (Sub0Pipeline, Sub0Log); `sub0math::Time` is
   simulation time. A conversion is provided at the boundary.
 
@@ -114,12 +120,21 @@ makeBox(1_m, 5_m, 6_m);                       // compile error: role not named
   significant, the fallback is narrower use at interfaces, not dropping the checks.
 - If units outgrow `sub0math/units/`, they split into a Sub0Units library without changing the API.
 
-## Open questions
+## Resolved questions (2026-10-15)
 
-1. **Bare numbers in physical roles.** Should `Height{1}` compile and mean 1 metre (SI default), or must a
-   unit always be written (`Height{1_m}`)? The proposal requires the unit for physical quantities, because
-   an implicit SI default reintroduces the millimetre/metre mistake; bare numbers stay fine for roles over
-   plain numbers (`RetryCount{3}`).
-2. **Dimensions in v1.** Length, mass, time, angle and temperature are proposed; electric current and
-   amount of substance are added when a consumer needs them (KismoEdge sensors are the likely first).
-3. **Matrix layout.** Column-major, matching GPU and Filament conventions, is proposed.
+1. **Bare numbers in physical roles:** a unit is always required (`Height{1_m}`); `Height{1}` does not
+   compile. Bare numbers remain fine for roles over plain numbers (`RetryCount{3}`).
+2. **Dimensions in v1:** length, mass, time, angle and temperature. Electric current and amount of
+   substance arrive with their first consumer (KismoEdge sensors).
+3. **Matrix layout:** column-major, matching GPU and Filament conventions.
+4. **Float or double:** float by default, double by explicit choice (above).
+5. **Performance tooling** (benchmark runner, per-host budgets, VTune/Advisor/perf targets, vectorization
+   reports) lives in Sub0Math, the bottom of the stack, and is shared by every library above it.
+6. **Local development:** the shared CPM bootstrap is 0.43.2, which reads `CPM_<Package>_SOURCE` from the
+   environment, so a developer machine builds the whole stack from local checkouts while CI builds pins.
+
+## Follow-ups
+
+- Primitive shapes and their purposes (bounding, collision, render meshes): see the shapes proposal.
+- Station setups in BikeDynamics move to quantities and roles.
+- Sub0HexGrid adopts `Point2d`, coordinated with Crucible's pin.
