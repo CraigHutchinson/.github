@@ -33,11 +33,22 @@ used yet.
 7. **Performance:** small hot functions use `SUB0MATH_FORCE_INLINE`. Adopting `closestPoint` pushed a
    Sub0Physics helper past GCC's inlining budget (+60% on clearance) until it did.
 
+## Added since
+
+| Date | Shapes | Consumer and evidence |
+|---|---|---|
+| 2026-10-16 | `OrientedBox` (with `AabbOverlapTester`), `Capsule`, `Plane`, `Triangle` (nearest point reports the vertex, edge or face), `Ray`, `RegularGrid` | The terrain plan's groundwork (steps G1–G3: pages, corridor coverage, exact height queries, support-normal rays), whose needs were measured first by the D0 experiment. They were added as one batch ahead of those consumers, an exception to rule 2 justified by the measured plan. Paired benchmarks: triangle and ray at parity with hand-written kernels. Box-against-blocks has a recorded 1.1× gap and follow-up |
+
+Rule added with them: the hand-written side of a paired benchmark is the fastest known code and is
+never weakened. A gap is closed by evolving the API, or recorded as an open gap with a follow-up
+(Sub0Math `docs/PERFORMANCE.md`). Iterated code carries a short `// PERF:` note.
+
 ## Next candidates, each with its trigger
 
 | Shape or type | Trigger |
 |---|---|
-| `Capsule`, oriented `Box`, `Plane` | 3D wheel, frame and ground contact in BikeDynamics |
 | `Posed<S>`, `Bounding<S>` | First broad phase (multiple bodies or terrain tiles) |
 | `Collision<S>` with materials | First contact solver work in Sub0Physics |
 | Mesh views, `toMesh` | Scanned or generated trail terrain; first render consumer |
+| Torus or swept-disc tyre envelope | R1 distributed tyre contact, if the capsule envelope proves too coarse |
+| `InFrame<Frame, V>` frame tags | The terrain API boundary (G1) |
