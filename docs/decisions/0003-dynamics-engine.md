@@ -1,6 +1,6 @@
 # 0003: Own the dynamics core in Sub0Physics; MuJoCo as a reference, not the runtime
 
-- **Status:** Proposed (2026-10-19), for decision
+- **Status:** Accepted (2026-10-19)
 - **Owner:** Craig Hutchinson
 - **Builds on:** [ADR 0001](0001-sub0math.md), [ADR 0002](0002-shapes.md); BikeDynamics' terrain design
   (private) and KismoEngine's runtime goals
@@ -128,7 +128,7 @@ What we give up:
 
 What we take on: a real engineering effort, with risk. That risk is controlled below.
 
-## Decision (proposed)
+## Decision
 
 1. **Sub0Physics owns the dynamics core.** It is a reduced-coordinate multibody tree with typed force
    elements that supply Jacobians, a small constraint layer, implicit integration, deterministic
