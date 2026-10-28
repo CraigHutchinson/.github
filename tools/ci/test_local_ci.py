@@ -113,6 +113,12 @@ class RunTests(unittest.TestCase):
         with self.assertRaises(lc.CiError):
             lc.run_level(CONFIG, "quick", Path("."), only=["nope"], detect=fake_detect({}), runner=self.runner())
 
+    def test_requires_env_skips(self):
+        cfg = {"levels": {"quick": {"steps": [{"name": "opt", "requires_env": "LOCAL_CI_TEST_UNSET_VAR", "commands": [["false"]]},
+                                              {"name": "py", "commands": [["x"]]}]}}}
+        results = lc.run_level(cfg, "quick", Path("."), detect=fake_detect({}), runner=self.runner())
+        self.assertEqual([r.status for r in results], ["skipped", "passed"])
+
     def test_nothing_passed_is_not_ok(self):
         self.assertFalse(lc.overall_ok([lc.StepResult("a", "skipped")]))
 

@@ -18,6 +18,8 @@ A STEP is an object:
                 for gcc and clang. Without a compiler the step always runs (python tests, scripts).
     optional    true: a missing compiler skips the step. false (default): a missing compiler fails the run.
     env         extra environment variables
+    requires_env  name of an environment variable that must be set (non-empty) for the step to run; otherwise
+                the step is skipped (for slow or opt-in checks, e.g. a reference simulator build)
     ctest       true when the step's commands include a ctest run whose "N tests passed" line should be
                 counted into the status description (default: any command starting with "ctest")
     commands    list of commands; each is an argv list or a string (split with shlex). Placeholders:
@@ -65,6 +67,7 @@ class Step:
     optional: bool = False
     env: dict = field(default_factory=dict)
     ctest: Optional[bool] = None
+    requires_env: Optional[str] = None
 
 
 def load_config(repo: Path) -> dict:
@@ -92,7 +95,7 @@ def steps_for(config: dict, level: str) -> list[Step]:
         if raw.get("compiler") not in (None, "gcc", "clang", "msvc"):
             raise CiError(f"step '{raw['name']}': unknown compiler '{raw.get('compiler')}'")
         steps.append(Step(raw["name"], raw["commands"], raw.get("compiler"), bool(raw.get("optional", False)),
-                          dict(raw.get("env", {})), raw.get("ctest")))
+                          dict(raw.get("env", {})), raw.get("ctest"), raw.get("requires_env")))
     if not steps:
         raise CiError(f"level '{level}' declares no steps")
     return steps
@@ -207,6 +210,8 @@ def run_command(argv: list[str], cwd: Path, env: dict, echo: bool = True) -> tup
 def run_step(step: Step, level: str, repo: Path, compilers: dict, dry_run: bool = False,
              runner: Callable = run_command) -> StepResult:
     comp = None
+    if step.requires_env and not os.environ.get(step.requires_env):
+        return StepResult(step.name, "skipped", note=f"set {step.requires_env} to run")
     if step.compiler:
         comp = compilers.get(step.compiler)
         if comp is None:
