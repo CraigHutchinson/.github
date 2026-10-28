@@ -37,6 +37,23 @@ out. Almost all of it repeated checks that already run locally before every push
 | **Full** | A tag `v*` or `milestone/*`; `workflow_dispatch`; a pull request labelled `ci:full`; a weekly schedule that runs **only if `main` changed since the last successful full run** | Linux GCC and Clang, an FMA leg where determinism matters, Windows MSVC, macOS, sanitizers, `ctest --preset full` including reference suites, provenance and golden regeneration | 30–100 min |
 | **Release** | A release tag | The full tier must pass before the release is published | As full |
 
+### Explicit no-CI gate
+
+CI can be switched off deliberately, so it never just fails. For example, when a billing quota is exhausted, the
+family continues local-first until the cycle resets.
+
+| Gate | How | Scope |
+|---|---|---|
+| **`CI_MODE` variable** | Every job in the reusable workflows runs only `if: vars.CI_MODE != 'off'`. Set it per organisation (`gh variable set CI_MODE --org <org> --body off`) or per repository (`gh variable set CI_MODE -R <owner/repo> --body off`). `smoke` limits a repository to the smoke tier; unset or `full` is normal operation | Everything, with no commits needed; reversible with one command |
+| **`[skip ci]`** | GitHub's own commit-message marker (`[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]`): the push or pull request runs no workflows | One commit: comment-only, formatting, metadata or other changes that cannot affect a build |
+| **`ci:skip` label** | Pull requests labelled `ci:skip` run no tier. `ci-policy` then requires a `local-ci/quick` or `local-ci/full` status instead | One pull request |
+| **Documentation only** | `paths-ignore` | Automatic |
+
+While CI is off, the local gates are the only verifiers: the pre-push perf gate, `ctest --preset quick` every
+change, and `local_ci.py --level full` before milestones. The status `local_ci.py` posts is the record of what was
+verified. When CI resumes, run the full tier once with `workflow_dispatch` on each repository's `main`, to catch
+anything platform-specific that accumulated meanwhile.
+
 **Not in CI:** performance measurement. Shared runners are too noisy to judge it, and the local gate
 (`Sub0Math` `tools/perf`, quick level every push, full level at milestones) owns it. A repository may run an
 informational benchmark at release.
@@ -64,6 +81,7 @@ smoke tier.
 | `ci:full` | Run the full tier on this pull request |
 | `ci:local-verified` | The head commit carries a successful `local-ci/full` status; the full tier may be skipped for merging |
 | `ci:release` | Set on release pull requests; the full tier is required |
+| `ci:skip` | Run no CI tier on this pull request; `ci-policy` requires a local-ci status instead |
 
 **Merge rule for pull requests:** smoke passes, and either the full tier passes or `ci:local-verified` is set and
 the `local-ci/full` status matches the head commit. The `ci-policy` job in `cpp-smoke.yml` checks this and reports
