@@ -1,0 +1,212 @@
+name: C++ smoke (reusable)
+
+# The everyday CI tier (docs/ci-strategy.md): one Linux job that configures, builds with warnings as errors
+# and runs `ctest --preset quick`; plus, on pull requests, the `ci-policy` job that reports the `ci/policy`
+# commit status. Merge rule: smoke passed AND (full tier passed OR label `ci:local-verified` with a successful
+# `local-ci/full` status on the PR head commit). With label `ci:skip` no tier runs and the policy instead
+# requires a successful `local-ci/quick` or `local-ci/full` status.
+#
+# Explicit no-CI gate: every job runs only `if: vars.CI_MODE != 'off'` (repository or organisation variable).
+# While CI_MODE=off no `ci/policy` status is posted either, so do not require it in a ruleset during that time.
+#
+# Caller (pin by commit SHA of this repository):
+#
+#   jobs:
+#     smoke:
+#       uses: CraigHutchinson/.github/.github/workflows/cpp-smoke.yml@<sha>
+#       with:
+#         extra-cmake-args: -DMYLIB_WARNINGS_AS_ERRORS=ON
+#       permissions: { contents: read, statuses: write, actions: read, pull-requests: read, checks: read }
+#
+# The caller's pull_request trigger should list `types: [opened, synchronize, reopened, labeled, unlabeled]`
+# so adding `ci:local-verified` or `ci:skip` re-evaluates the policy; the smoke job itself is skipped on label
+# events and `ci-policy` reuses the earlier smoke result for that commit.
+
+on:
+  workflow_call:
+    inputs:
+      configure-preset:
+        description: CMake configure preset (the one the `quick` test preset inherits from)
+        type: string
+        default: default
+      build-preset:
+        type: string
+        default: default
+      test-preset:
+        type: string
+        default: quick
+      cc:
+        type: string
+        default: gcc-14
+      cxx:
+        type: string
+        default: g++-14
+      apt-packages:
+        description: Packages installed with apt-get (toolchain and tools)
+        type: string
+        default: g++-14 ninja-build ccache
+      extra-cmake-args:
+        description: Extra configure arguments, e.g. -DMYLIB_WARNINGS_AS_ERRORS=ON -DSUB0MATH_PERF_ON_BUILD=OFF
+        type: string
+        default: ""
+      cpm-cache-key-files:
+        description: Space-separated files whose content keys the CPM source cache (dependency pins)
+        type: string
+        default: cmake/Dependencies.cmake CMakeLists.txt
+      timeout-minutes:
+        type: number
+        default: 25
+      full-workflow-file:
+        description: File name of the caller's full-tier workflow (looked up by ci-policy)
+        type: string
+        default: ci-full.yml
+      policy:
+        description: Run the ci-policy job on pull requests
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    # Off switch, ci:skip label, and label-only pull request events (these re-evaluate the policy, no rebuild).
+    if: >-
+      ${{ vars.CI_MODE != 'off'
+      && !contains(github.event.pull_request.labels.*.name, 'ci:skip')
+      && !(github.event_name == 'pull_request' && (github.event.action == 'labeled' || github.event.action == 'unlabeled')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    env:
+      CPM_SOURCE_CACHE: ${{ github.workspace }}/.cache/cpm
+      CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+      CCACHE_MAXSIZE: 500M
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        env:
+          APT_PACKAGES: ${{ inputs.apt-packages }}
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES
+      - name: Key the dependency cache on the pins
+        id: keys
+        env:
+          KEY_FILES: ${{ inputs.cpm-cache-key-files }}
+        run: |
+          # shellcheck disable=SC2086
+          echo "cpm=$(cat $KEY_FILES 2>/dev/null | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .cache/cpm
+          key: cpm-${{ runner.os }}-${{ steps.keys.outputs.cpm }}
+          restore-keys: cpm-${{ runner.os }}-
+      - uses: actions/cache@v4
+        with:
+          path: .cache/ccache
+          key: ccache-smoke-${{ inputs.cxx }}-${{ steps.keys.outputs.cpm }}-${{ github.sha }}
+          restore-keys: |
+            ccache-smoke-${{ inputs.cxx }}-${{ steps.keys.outputs.cpm }}-
+            ccache-smoke-${{ inputs.cxx }}-
+      - name: Configure
+        env:
+          CC: ${{ inputs.cc }}
+          CXX: ${{ inputs.cxx }}
+          PRESET: ${{ inputs.configure-preset }}
+          EXTRA: ${{ inputs.extra-cmake-args }}
+        run: |
+          # shellcheck disable=SC2086
+          cmake --preset "$PRESET" -G Ninja -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache $EXTRA
+      - name: Build
+        run: cmake --build --preset "${{ inputs.build-preset }}"
+      - name: Test (quick tier)
+        run: ctest --preset "${{ inputs.test-preset }}"
+      - name: Summary
+        run: |
+          {
+            echo "### Smoke tier"
+            echo "Configure, build (warnings as errors) and \`ctest --preset ${{ inputs.test-preset }}\` on ubuntu-24.04, ${{ inputs.cxx }}."
+            echo "Not covered here: other compilers and platforms, sanitizers, long suites, provenance. See the full tier and docs/ci-strategy.md."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - run: ccache --show-stats || true
+
+  ci-policy:
+    # Merge rule for pull requests; reports the `ci/policy` commit status (rulesets can require it).
+    if: ${{ inputs.policy && github.event_name == 'pull_request' && vars.CI_MODE != 'off' && !cancelled() }}
+    needs: smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+      actions: read
+      pull-requests: read
+      checks: read
+    steps:
+      - name: Evaluate and report ci/policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+          FULL_FILE: ${{ inputs.full-workflow-file }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          post() {
+            gh api "repos/$REPO/statuses/$SHA" -f state="$1" -f context="ci/policy" \
+              -f description="$2" -f target_url="$RUN_URL" > /dev/null
+            echo "ci/policy: $1 - $2"
+          }
+          labels=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name')
+          has_status() {  # has_status <context>: a successful commit status with that context on the head commit
+            m=$(gh api "repos/$REPO/commits/$SHA/status" \
+              --jq "[.statuses[] | select(.context == \"$1\" and .state == \"success\")] | length")
+            [ "$m" -gt 0 ]
+          }
+          # 0. ci:skip: no tier runs; a local attestation is required instead.
+          if echo "$labels" | grep -qx 'ci:skip'; then
+            if has_status local-ci/full || has_status local-ci/quick; then
+              post success "ci:skip: attested locally (local-ci status)"
+            else
+              post failure "ci:skip is set but this commit has no successful local-ci/quick or local-ci/full status"
+            fi
+            exit 0
+          fi
+          # 1. Smoke must have passed (on a label-only event it was skipped: use its earlier result).
+          smoke_ok=false
+          if [ "$SMOKE_RESULT" = success ]; then
+            smoke_ok=true
+          elif [ "$SMOKE_RESULT" = skipped ]; then
+            n=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select(.name | test("(^|/ )smoke$")) | select(.conclusion == "success")] | length')
+            [ "$n" -gt 0 ] && smoke_ok=true
+          fi
+          if [ "$smoke_ok" != true ]; then
+            post failure "smoke tier has not passed on this commit"
+            exit 0
+          fi
+          # 2. Full tier passed on this exact commit?
+          n=$(gh api "repos/$REPO/actions/workflows/$FULL_FILE/runs?head_sha=$SHA&status=success&per_page=1" --jq '.total_count' || echo 0)
+          if [ "$n" -gt 0 ]; then
+            post success "smoke and full tier passed"
+            exit 0
+          fi
+          # 3. Otherwise the local attestation: label + successful local-ci/full status for this commit.
+          if echo "$labels" | grep -qx 'ci:release'; then
+            post pending "release PR: the full tier must pass (add ci:full)"
+            exit 0
+          fi
+          if echo "$labels" | grep -qx 'ci:local-verified'; then
+            if has_status local-ci/full; then
+              post success "smoke passed; full tier attested locally (local-ci/full)"
+            else
+              post failure "ci:local-verified is set but this commit has no successful local-ci/full status"
+            fi
+            exit 0
+          fi
+          post pending "smoke passed; needs the full tier (label ci:full) or ci:local-verified with local-ci/full"

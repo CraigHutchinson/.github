@@ -1,0 +1,385 @@
+name: C++ full (reusable)
+
+# The release-complete CI tier (docs/ci-strategy.md): Linux GCC and Clang, an optional FMA leg, Windows MSVC,
+# optional macOS, optional ASan+UBSan, all running `ctest --preset full`. Repository-specific extras
+# (reference simulators, provenance, golden regeneration, python tests) are jobs in the caller's own workflow
+# next to this one; the caller decides whether they gate. Performance is deliberately not here: the local
+# gate owns it.
+#
+# Explicit no-CI gate. Every job runs only when
+#   vars.CI_MODE != 'off'                                        (CI paused)
+#   && (vars.CI_MODE != 'smoke' || the ref is a release tag v*)  (smoke mode: the full tier runs for releases only)
+#   && the pull request is not labelled ci:skip.
+#
+# Caller (pin by commit SHA of this repository):
+#
+#   jobs:
+#     full:
+#       uses: CraigHutchinson/.github/.github/workflows/cpp-full.yml@<sha>
+#       with:
+#         extra-cmake-args: -DMYLIB_WARNINGS_AS_ERRORS=ON
+#         fma: true
+#         macos: true
+#       permissions: { contents: read, statuses: write, actions: read, pull-requests: read, checks: read }
+
+on:
+  workflow_call:
+    inputs:
+      configure-preset:
+        type: string
+        default: default
+      build-preset:
+        type: string
+        default: default
+      test-preset:
+        type: string
+        default: full
+      linux-legs:
+        description: 'JSON array of Linux legs: [{"name":"gcc","cc":"gcc-14","cxx":"g++-14"}, ...]'
+        type: string
+        default: '[{"name":"gcc","cc":"gcc-14","cxx":"g++-14"},{"name":"clang","cc":"clang-19","cxx":"clang++-19"}]'
+      fma:
+        description: Add a Linux leg built with -march=x86-64-v3 (FMA available; determinism check)
+        type: boolean
+        default: false
+      fma-cc:
+        type: string
+        default: clang-19
+      fma-cxx:
+        type: string
+        default: clang++-19
+      windows:
+        description: windows-2022 MSVC leg
+        type: boolean
+        default: true
+      macos:
+        description: macos-14 leg (billed at 10x on private repositories)
+        type: boolean
+        default: false
+      sanitizers:
+        description: ASan+UBSan leg
+        type: boolean
+        default: false
+      sanitizer-configure-preset:
+        type: string
+        default: ci-asan
+      sanitizer-build-preset:
+        type: string
+        default: ci-asan
+      sanitizer-test-preset:
+        type: string
+        default: ci-asan
+      apt-packages:
+        type: string
+        default: g++-14 clang-19 ninja-build ccache
+      extra-cmake-args:
+        description: Extra configure arguments for every leg (warnings as errors, perf hooks off, ...)
+        type: string
+        default: ""
+      cpm-cache-key-files:
+        type: string
+        default: cmake/Dependencies.cmake CMakeLists.txt
+      timeout-minutes:
+        description: Per-job timeout
+        type: number
+        default: 60
+      refresh-policy:
+        description: On pull requests, re-evaluate ci/policy when this tier has finished
+        type: boolean
+        default: true
+      policy-wait-minutes:
+        description: How long the refresh waits for the caller's other jobs of this run
+        type: number
+        default: 45
+
+permissions:
+  contents: read
+
+env:
+  CPM_SOURCE_CACHE: ${{ github.workspace }}/.cache/cpm
+
+jobs:
+  linux:
+    name: linux (${{ matrix.name }})
+    if: >-
+      ${{ vars.CI_MODE != 'off'
+      && (vars.CI_MODE != 'smoke' || startsWith(github.ref, 'refs/tags/v'))
+      && !contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.linux-legs) }}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+      CCACHE_MAXSIZE: 500M
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        env:
+          APT_PACKAGES: ${{ inputs.apt-packages }}
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES
+      - name: Key the dependency cache on the pins
+        id: keys
+        env:
+          KEY_FILES: ${{ inputs.cpm-cache-key-files }}
+        run: |
+          # shellcheck disable=SC2086
+          echo "cpm=$(cat $KEY_FILES 2>/dev/null | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .cache/cpm
+          key: cpm-${{ runner.os }}-${{ steps.keys.outputs.cpm }}
+          restore-keys: cpm-${{ runner.os }}-
+      - uses: actions/cache@v4
+        with:
+          path: .cache/ccache
+          key: ccache-full-${{ matrix.name }}-${{ steps.keys.outputs.cpm }}-${{ github.sha }}
+          restore-keys: ccache-full-${{ matrix.name }}-${{ steps.keys.outputs.cpm }}-
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          PRESET: ${{ inputs.configure-preset }}
+          EXTRA: ${{ inputs.extra-cmake-args }}
+        run: |
+          # shellcheck disable=SC2086
+          cmake --preset "$PRESET" -G Ninja -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache $EXTRA
+      - run: cmake --build --preset "${{ inputs.build-preset }}"
+      - name: Test (full tier)
+        run: ctest --preset "${{ inputs.test-preset }}"
+
+  linux-fma:
+    # FMA hardware: results must match the baseline legs. Proves the determinism helpers hold when the
+    # compiler could fuse multiply-add.
+    if: >-
+      ${{ inputs.fma && vars.CI_MODE != 'off'
+      && (vars.CI_MODE != 'smoke' || startsWith(github.ref, 'refs/tags/v'))
+      && !contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
+    name: linux (x86-64-v3 FMA)
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+      CCACHE_MAXSIZE: 500M
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        env:
+          APT_PACKAGES: ${{ inputs.apt-packages }}
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES
+      - name: Check the target has FMA
+        env:
+          CXX: ${{ inputs.fma-cxx }}
+        run: '"$CXX" -march=x86-64-v3 -dM -E -x c++ /dev/null | grep -q __FMA__'
+      - name: Key the dependency cache on the pins
+        id: keys
+        env:
+          KEY_FILES: ${{ inputs.cpm-cache-key-files }}
+        run: |
+          # shellcheck disable=SC2086
+          echo "cpm=$(cat $KEY_FILES 2>/dev/null | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .cache/cpm
+          key: cpm-${{ runner.os }}-${{ steps.keys.outputs.cpm }}
+          restore-keys: cpm-${{ runner.os }}-
+      - uses: actions/cache@v4
+        with:
+          path: .cache/ccache
+          key: ccache-full-fma-${{ steps.keys.outputs.cpm }}-${{ github.sha }}
+          restore-keys: ccache-full-fma-${{ steps.keys.outputs.cpm }}-
+      - name: Configure
+        env:
+          CC: ${{ inputs.fma-cc }}
+          CXX: ${{ inputs.fma-cxx }}
+          PRESET: ${{ inputs.configure-preset }}
+          EXTRA: ${{ inputs.extra-cmake-args }}
+        run: |
+          # shellcheck disable=SC2086
+          cmake --preset "$PRESET" -G Ninja -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_FLAGS=-march=x86-64-v3 $EXTRA
+      - run: cmake --build --preset "${{ inputs.build-preset }}"
+      - name: Test (full tier)
+        run: ctest --preset "${{ inputs.test-preset }}"
+
+  windows:
+    if: >-
+      ${{ inputs.windows && vars.CI_MODE != 'off'
+      && (vars.CI_MODE != 'smoke' || startsWith(github.ref, 'refs/tags/v'))
+      && !contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
+    name: windows (MSVC)
+    runs-on: windows-2022
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Key the dependency cache on the pins
+        id: keys
+        env:
+          KEY_FILES: ${{ inputs.cpm-cache-key-files }}
+        run: |
+          # shellcheck disable=SC2086
+          echo "cpm=$(cat $KEY_FILES 2>/dev/null | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .cache/cpm
+          key: cpm-${{ runner.os }}-${{ steps.keys.outputs.cpm }}
+          restore-keys: cpm-${{ runner.os }}-
+      - name: Configure
+        env:
+          PRESET: ${{ inputs.configure-preset }}
+          EXTRA: ${{ inputs.extra-cmake-args }}
+        run: |
+          # shellcheck disable=SC2086
+          cmake --preset "$PRESET" $EXTRA
+      - run: cmake --build --preset "${{ inputs.build-preset }}"
+      - name: Test (full tier)
+        run: ctest --preset "${{ inputs.test-preset }}"
+
+  macos:
+    if: >-
+      ${{ inputs.macos && vars.CI_MODE != 'off'
+      && (vars.CI_MODE != 'smoke' || startsWith(github.ref, 'refs/tags/v'))
+      && !contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
+    name: macos (Apple Clang)
+    runs-on: macos-14
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Key the dependency cache on the pins
+        id: keys
+        env:
+          KEY_FILES: ${{ inputs.cpm-cache-key-files }}
+        run: |
+          # shellcheck disable=SC2086
+          echo "cpm=$(cat $KEY_FILES 2>/dev/null | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .cache/cpm
+          key: cpm-${{ runner.os }}-${{ steps.keys.outputs.cpm }}
+          restore-keys: cpm-${{ runner.os }}-
+      - name: Configure
+        env:
+          PRESET: ${{ inputs.configure-preset }}
+          EXTRA: ${{ inputs.extra-cmake-args }}
+        run: |
+          # shellcheck disable=SC2086
+          cmake --preset "$PRESET" $EXTRA
+      - run: cmake --build --preset "${{ inputs.build-preset }}"
+      - name: Test (full tier)
+        run: ctest --preset "${{ inputs.test-preset }}"
+
+  sanitizers:
+    if: >-
+      ${{ inputs.sanitizers && vars.CI_MODE != 'off'
+      && (vars.CI_MODE != 'smoke' || startsWith(github.ref, 'refs/tags/v'))
+      && !contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
+    name: sanitizers (ASan + UBSan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+      CCACHE_MAXSIZE: 500M
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        env:
+          APT_PACKAGES: ${{ inputs.apt-packages }}
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES
+      - name: Key the dependency cache on the pins
+        id: keys
+        env:
+          KEY_FILES: ${{ inputs.cpm-cache-key-files }}
+        run: |
+          # shellcheck disable=SC2086
+          echo "cpm=$(cat $KEY_FILES 2>/dev/null | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .cache/cpm
+          key: cpm-${{ runner.os }}-${{ steps.keys.outputs.cpm }}
+          restore-keys: cpm-${{ runner.os }}-
+      - uses: actions/cache@v4
+        with:
+          path: .cache/ccache
+          key: ccache-full-asan-${{ steps.keys.outputs.cpm }}-${{ github.sha }}
+          restore-keys: ccache-full-asan-${{ steps.keys.outputs.cpm }}-
+      - name: Configure (ASan + UBSan)
+        env:
+          CC: gcc-14
+          CXX: g++-14
+          PRESET: ${{ inputs.sanitizer-configure-preset }}
+        run: cmake --preset "$PRESET" -G Ninja -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - run: cmake --build --preset "${{ inputs.sanitizer-build-preset }}"
+      - name: Test (sanitized)
+        run: ctest --preset "${{ inputs.sanitizer-test-preset }}"
+
+  policy-refresh:
+    # On a pull request, once this tier and the caller's other jobs of the same run have finished, re-evaluate
+    # the ci/policy status (the smoke workflow's ci-policy job ran earlier and could not know the outcome).
+    if: >-
+      ${{ inputs.refresh-policy && github.event_name == 'pull_request' && !cancelled()
+      && vars.CI_MODE != 'off'
+      && (vars.CI_MODE != 'smoke' || startsWith(github.ref, 'refs/tags/v'))
+      && !contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
+    needs: [linux, linux-fma, windows, macos, sanitizers]
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      statuses: write
+      actions: read
+      checks: read
+    steps:
+      - name: Wait for the run's other jobs, then report ci/policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OWN_FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+          WAIT_MIN: ${{ inputs.policy-wait-minutes }}
+        run: |
+          set -euo pipefail
+          post() {
+            gh api "repos/$REPO/statuses/$SHA" -f state="$1" -f context="ci/policy" \
+              -f description="$2" -f target_url="$RUN_URL" > /dev/null
+            echo "ci/policy: $1 - $2"
+          }
+          if [ "$OWN_FAILED" = true ]; then
+            post failure "full tier failed"
+            exit 0
+          fi
+          # Sibling jobs of this run (caller-defined extras): wait until all but this one are completed.
+          deadline=$(( $(date +%s) + WAIT_MIN * 60 ))
+          while :; do
+            jobs=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.name | test("policy-refresh") | not)]')
+            open=$(echo "$jobs" | jq '[.[] | select(.status != "completed")] | length')
+            bad=$(echo "$jobs" | jq '[.[] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "cancelled"))] | length')
+            if [ "$bad" -gt 0 ]; then post failure "full tier failed"; exit 0; fi
+            if [ "$open" -eq 0 ]; then break; fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then post pending "full tier still running"; exit 0; fi
+            sleep 30
+          done
+          # Smoke must also have passed on this commit.
+          n=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+            --jq '[.check_runs[] | select(.name | test("(^|/ )smoke$")) | select(.conclusion == "success")] | length')
+          if [ "$n" -gt 0 ]; then
+            post success "smoke and full tier passed"
+          else
+            post pending "full tier passed; smoke has not passed on this commit"
+          fi

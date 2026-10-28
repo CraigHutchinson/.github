@@ -1,0 +1,77 @@
+name: Change gate (reusable)
+
+# Decides whether a caller's full tier (and its extra jobs) should run (docs/ci-strategy.md):
+#   - CI_MODE=off                       -> the gate job is skipped, so nothing downstream runs;
+#   - label ci:skip on the pull request -> no;
+#   - CI_MODE=smoke                     -> only release tags v*;
+#   - pull_request events               -> only with label ci:full;
+#   - the weekly schedule               -> only if `main` has no successful full-tier run at its head yet;
+#   - any other trigger (tag, dispatch) -> yes.
+#
+# Caller:
+#
+#   jobs:
+#     gate:
+#       uses: CraigHutchinson/.github/.github/workflows/change-gate.yml@<sha>
+#       with: { full-workflow-file: ci-full.yml }
+#       permissions: { contents: read, actions: read }
+#     full:
+#       needs: gate
+#       if: needs.gate.outputs.run == 'true'
+#       uses: CraigHutchinson/.github/.github/workflows/cpp-full.yml@<sha>
+#     my-extra-job:
+#       needs: gate
+#       if: needs.gate.outputs.run == 'true'
+
+on:
+  workflow_call:
+    inputs:
+      full-workflow-file:
+        description: File name of the full-tier workflow whose successful runs are looked up
+        type: string
+        default: ci-full.yml
+      branch:
+        type: string
+        default: main
+    outputs:
+      run:
+        description: "'true' when the full tier should run"
+        value: ${{ jobs.gate.outputs.run }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    if: ${{ vars.CI_MODE != 'off' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          CI_MODE: ${{ vars.CI_MODE }}
+          BRANCH: ${{ inputs.branch }}
+          FULL_FILE: ${{ inputs.full-workflow-file }}
+          SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
+          WANT_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+        run: |
+          set -euo pipefail
+          no() { echo "run=false" >> "$GITHUB_OUTPUT"; echo "### Full tier skipped" >> "$GITHUB_STEP_SUMMARY"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          [ "$SKIP" = true ] && no "Pull request is labelled ci:skip."
+          if [ "$CI_MODE" = smoke ] && [[ "$REF" != refs/tags/v* ]]; then no "CI_MODE=smoke: the full tier runs for release tags (v*) only."; fi
+          if [ "$EVENT" = pull_request ] && [ "$WANT_FULL" != true ]; then no "Pull request without the ci:full label."; fi
+          if [ "$EVENT" = schedule ]; then
+            head=$(gh api "repos/$REPO/commits/$BRANCH" --jq .sha)
+            # Any of the recent successful full-tier runs (tag, dispatch, label or schedule) on this exact commit.
+            n=$(gh api "repos/$REPO/actions/workflows/$FULL_FILE/runs?status=success&per_page=50" \
+              --jq "[.workflow_runs[] | select(.head_sha == \"$head\")] | length")
+            [ "$n" -gt 0 ] && no "$BRANCH ($head) already passed the full tier; nothing changed since."
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
