@@ -1,0 +1,55 @@
+name: ci-policy (reusable)
+
+# Single-shot ci/policy evaluation for pull requests. A caller runs it as the LAST job of its full-tier
+# workflow, with `needs:` on every other job, so GitHub orders it and nothing waits on a billed runner.
+#
+#   policy:
+#     needs: [full, my-extra-job]
+#     if: ${{ always() && github.event_name == 'pull_request' }}
+#     uses: CraigHutchinson/.github/.github/workflows/ci-policy.yml@<sha>
+#     with:
+#       upstream-result: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+#     permissions: { contents: read, statuses: write, checks: read }
+
+on:
+  workflow_call:
+    inputs:
+      upstream-result:
+        description: "'success' or 'failure': the combined result of the caller's full-tier jobs"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    if: >-
+      ${{ github.event_name == 'pull_request' && vars.CI_MODE != 'off'
+      && !contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+      checks: read
+    steps:
+      - name: Report ci/policy once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          UPSTREAM: ${{ inputs.upstream-result }}
+        run: |
+          set -euo pipefail
+          post() {
+            gh api "repos/$REPO/statuses/$SHA" -f state="$1" -f context="ci/policy" \
+              -f description="$2" -f target_url="$RUN_URL" > /dev/null
+            echo "ci/policy: $1 - $2"
+          }
+          if [ "$UPSTREAM" != "success" ]; then post failure "full tier failed"; exit 0; fi
+          n=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+            --jq '[.check_runs[] | select(.name | test("(^|/ )smoke$")) | select(.conclusion == "success")] | length')
+          if [ "$n" -gt 0 ]; then post success "smoke and full tier passed"
+          else post pending "full tier passed; smoke has not passed on this commit"; fi

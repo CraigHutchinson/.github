@@ -84,8 +84,10 @@ smoke tier.
 | `ci:skip` | Run no CI tier on this pull request; `ci-policy` requires a local-ci status instead |
 
 **Merge rule for pull requests:** smoke passes, and either the full tier passes or `ci:local-verified` is set and
-the `local-ci/full` status matches the head commit. The `ci-policy` job in `cpp-smoke.yml` checks this and reports
-a `ci/policy` status that rulesets can require.
+the `local-ci/full` status matches the head commit. The `ci-policy` job in `cpp-smoke.yml` evaluates this when smoke finishes. The reusable `ci-policy.yml`, run as
+the last job of each repository's full-tier workflow with `needs:` on all its jobs, re-evaluates it once the full tier
+is done. Both report a `ci/policy` status that rulesets can require. Nothing polls: job ordering, not a waiting runner,
+decides when it reports.
 
 **Direct pushes to `main`,** the usual development flow for a single maintainer, run the smoke tier after the
 push. Required status checks are therefore not enforced on `main` itself; they would block pushes. They apply to

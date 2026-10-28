@@ -83,14 +83,6 @@ on:
         description: Per-job timeout
         type: number
         default: 60
-      refresh-policy:
-        description: On pull requests, re-evaluate ci/policy when this tier has finished
-        type: boolean
-        default: true
-      policy-wait-minutes:
-        description: How long the refresh waits for the caller's other jobs of this run
-        type: number
-        default: 45
 
 permissions:
   contents: read
@@ -325,61 +317,3 @@ jobs:
       - run: cmake --build --preset "${{ inputs.sanitizer-build-preset }}"
       - name: Test (sanitized)
         run: ctest --preset "${{ inputs.sanitizer-test-preset }}"
-
-  policy-refresh:
-    # On a pull request, once this tier and the caller's other jobs of the same run have finished, re-evaluate
-    # the ci/policy status (the smoke workflow's ci-policy job ran earlier and could not know the outcome).
-    if: >-
-      ${{ inputs.refresh-policy && github.event_name == 'pull_request' && !cancelled()
-      && vars.CI_MODE != 'off'
-      && (vars.CI_MODE != 'smoke' || startsWith(github.ref, 'refs/tags/v'))
-      && !contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
-    needs: [linux, linux-fma, windows, macos, sanitizers]
-    runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-      statuses: write
-      actions: read
-      checks: read
-    steps:
-      - name: Wait for the run's other jobs, then report ci/policy
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.event.pull_request.head.sha }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          OWN_FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
-          WAIT_MIN: ${{ inputs.policy-wait-minutes }}
-        run: |
-          set -euo pipefail
-          post() {
-            gh api "repos/$REPO/statuses/$SHA" -f state="$1" -f context="ci/policy" \
-              -f description="$2" -f target_url="$RUN_URL" > /dev/null
-            echo "ci/policy: $1 - $2"
-          }
-          if [ "$OWN_FAILED" = true ]; then
-            post failure "full tier failed"
-            exit 0
-          fi
-          # Sibling jobs of this run (caller-defined extras): wait until all but this one are completed.
-          deadline=$(( $(date +%s) + WAIT_MIN * 60 ))
-          while :; do
-            jobs=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.name | test("policy-refresh") | not)]')
-            open=$(echo "$jobs" | jq '[.[] | select(.status != "completed")] | length')
-            bad=$(echo "$jobs" | jq '[.[] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "cancelled"))] | length')
-            if [ "$bad" -gt 0 ]; then post failure "full tier failed"; exit 0; fi
-            if [ "$open" -eq 0 ]; then break; fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then post pending "full tier still running"; exit 0; fi
-            sleep 30
-          done
-          # Smoke must also have passed on this commit.
-          n=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
-            --jq '[.check_runs[] | select(.name | test("(^|/ )smoke$")) | select(.conclusion == "success")] | length')
-          if [ "$n" -gt 0 ]; then
-            post success "smoke and full tier passed"
-          else
-            post pending "full tier passed; smoke has not passed on this commit"
-          fi
