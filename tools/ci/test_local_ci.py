@@ -46,6 +46,12 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(lc.expand("cmake -B {builddir} -j{jobs}", {"builddir": "b", "jobs": 4}), ["cmake", "-B", "b", "-j4"])
         self.assertEqual(lc.expand(["a", "{x}"], {"x": "y"}), ["a", "y"])
 
+    def test_ci_dir_placeholder_points_at_the_tools(self):
+        step = lc.Step("s", [["{ci_dir}/hook_check.py"]])
+        printed = []
+        lc.run_step(step, "quick", Path("."), {}, runner=lambda argv, cwd, env: printed.append(argv) or (0, ""))
+        self.assertEqual(Path(printed[0][0]), Path(lc.__file__).resolve().parent / "hook_check.py")
+
     def test_major_version(self):
         self.assertEqual(lc._major("g++ (GCC) 16.1.0\nCopyright"), "16")
         self.assertEqual(lc._major("garbage"), "?")

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Pre-push gate template (docs/ci-strategy.md, "Local gates must self-test").
+#
+# Copy to .githooks/pre-push, edit `build` and `tests`, then activate it once per clone:
+#     git config core.hooksPath .githooks
+# and prove it works: python <.github repo>/tools/ci/hook_check.py --repo .
+#
+# Rules this template keeps:
+#   - a push with no refs (everything up to date) and a push that only deletes do nothing, and exit 0;
+#   - a push that changes only documentation does nothing, and exit 0;
+#   - `pipefail` is on and no pipeline hides a failure: a failed build or test blocks the push.
+# `git push --no-verify` skips the hook.
+set -euo pipefail
+
+build=(cmake --build build --config Release -j4)
+tests=(ctest --test-dir build --output-on-failure)
+docs_re='\.md$|^docs/|^LICENSE|^LICENCE|^\.github/|^\.ci/'
+zero=0000000000000000000000000000000000000000
+
+# git writes "<local ref> <local sha> <remote ref> <remote sha>" per ref on stdin; nothing at all when up to date.
+pushed=0
+code=0
+while read -r local_ref local_sha remote_ref remote_sha || [ -n "${local_sha:-}" ]; do
+    remote_sha="${remote_sha%$'\r'}"                       # tolerate CRLF on stdin (Windows shells)
+    [ "$local_sha" = "$zero" ] && continue                # a deletion sends nothing
+    pushed=$((pushed + 1))
+    if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+        code=$((code + 1))                                # a new branch, or a remote commit we lack: assume code
+        continue
+    fi
+    changed="$(git diff --name-only "$remote_sha" "$local_sha")" || { code=$((code + 1)); continue; }
+    # A here-string, not a pipe: `grep -q` exits early and would SIGPIPE a producer under pipefail.
+    if [ -n "$changed" ] && grep -Ev "$docs_re" <<<"$changed" >/dev/null; then
+        code=$((code + 1))
+    fi
+done
+
+if [ "$pushed" -eq 0 ]; then
+    echo "pre-push: nothing is pushed (up to date, or only deletions); nothing to check"
+    exit 0
+fi
+if [ "$code" -eq 0 ]; then
+    echo "pre-push: documentation only; nothing to check"
+    exit 0
+fi
+
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+echo "pre-push: building..."
+if ! "${build[@]}" >"$log" 2>&1; then                     # redirected to a file, so the exit status is the build's own
+    tail -n 40 "$log"
+    echo "pre-push: BUILD FAILED - push aborted." >&2
+    exit 1
+fi
+echo "pre-push: testing..."
+if ! "${tests[@]}"; then
+    echo "pre-push: TESTS FAILED - push aborted." >&2
+    exit 1
+fi
+echo "pre-push: all checks passed."

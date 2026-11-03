@@ -25,6 +25,7 @@ A STEP is an object:
     commands    list of commands; each is an argv list or a string (split with shlex). Placeholders:
                 {builddir} build-local-<level>-<step name>   {cc} {cxx} compiler executables
                 {python} this interpreter   {jobs} CPU count   {repo} repository root
+                {ci_dir} the directory holding local_ci.py and its sibling tools (hook_check.py)
 
 On success a commit status `local-ci/<level>` is posted with `gh api repos/{owner}/{repo}/statuses/{sha}`, but
 only when the commit exists on the remote and the working tree is clean. Otherwise it says how to post after
@@ -219,7 +220,7 @@ def run_step(step: Step, level: str, repo: Path, compilers: dict, dry_run: bool 
             return StepResult(step.name, status, note=f"compiler '{step.compiler}' not found")
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", step.name)
     values = {"builddir": f"build-local-{level}-{safe}", "python": sys.executable, "jobs": os.cpu_count() or 2,
-              "repo": str(repo), "cc": comp.cc if comp else "", "cxx": comp.cxx if comp else ""}
+              "repo": str(repo), "ci_dir": str(Path(__file__).resolve().parent), "cc": comp.cc if comp else "", "cxx": comp.cxx if comp else ""}
     env = dict(os.environ)
     if comp and comp.kind in ("gcc", "clang"):
         env["CC"], env["CXX"] = comp.cc, comp.cxx

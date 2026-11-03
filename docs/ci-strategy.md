@@ -93,6 +93,58 @@ decides when it reports.
 push. Required status checks are therefore not enforced on `main` itself; they would block pushes. They apply to
 pull requests through rulesets.
 
+## Local gates must self-test
+
+Local-first means the local gates are the only verifier. A gate that quietly does the wrong thing is worse than no
+gate, because it reports a pass nobody earned. Two failures reached `main` on 2026-11-03:
+- a performance gate measured everything on a push with nothing to push, and its quick level overran a 90 s budget to
+  58 minutes on new, expensive benchmarks;
+- a `.githooks/pre-push` template piped the build through `tail`. Without `pipefail` the pipeline returned `tail`'s
+  status, so a failed build did not block, and the later `if [ $? -ne 0 ]` was dead code. It was also often inactive,
+  because `core.hooksPath` was unset.
+
+Rules for every pre-push gate:
+1. **Skip what has nothing to check.** A push with no refs (git runs the hook with empty stdin when everything is up to
+   date), a push that only deletes, and a documentation-only push exit 0 at once, without building or measuring. The
+   same documentation list as the `None` tier applies.
+2. **Never mask an exit status.** Use `set -euo pipefail`. A pipeline whose status matters must not end in a filter
+   such as `tail`, `head` or `grep`; redirect the output to a file and show the tail when the command fails.
+3. **Keep a time budget at the quick level.** Expensive or unknown work (a benchmark nobody has timed, a long suite) is
+   deferred to the full level and reported as not covered; it never justifies an overrun.
+4. **The hook must be active.** `git config core.hooksPath .githooks` for a committed hook; otherwise the installer
+   writes into the directory `git rev-parse --git-path hooks` names. A committed hook that is not the active one is a
+   finding.
+5. **Prove it.** `tools/ci/hook_check.py --repo .` checks the above without a push, and prints a pass/fail table
+   (non-zero exit on any failure):
+
+   | Check | Passes when |
+   |---|---|
+   | active hook | A `pre-push` hook is active (`core.hooksPath` resolved, else `.git/hooks`); a committed `.githooks/pre-push` that is not the active one is reported |
+   | empty push | The active hook, run with empty stdin as git runs it for an up-to-date push, in the repository with a clean environment, exits 0 within 30 s |
+   | status masking | A static lint finds no pipeline whose status matters (`set -e`, a `$?` check, `||`, `if !`) that ends in a filter, unless `pipefail` is on |
+   | deep self-test | Every command of the `"selftest"` list in `.ci/local.json` exits 0 |
+
+6. **Run it in local CI `quick`.** Add a step to `.ci/local.json`, so a gate that stops working is found by the next
+   routine run and not by the next failure. `{ci_dir}` is the directory of the running `local_ci.py`:
+
+   ```json
+   {"name": "hook-check", "commands": ["{python} {ci_dir}/hook_check.py --repo {repo}"]}
+   ```
+
+A repository with its own gate logic declares a deep check beside the quick step, for example one that drives its gate
+with synthetic pushes and a plan-only mode and measures nothing (Sub0Math's `bench_check.py selftest`):
+
+```json
+"selftest": ["{python} tools/perf/bench_check.py selftest --repo ."]
+```
+
+`selftest` commands take the placeholders `{python}`, `{repo}` and `{ci_dir}` and run in the repository.
+
+**Reference template:** [`templates/pre-push`](../templates/pre-push). Copy it to `.githooks/pre-push`, set its `build`
+and `tests`, and activate it. It exits 0 on empty stdin and on deletions, skips documentation-only pushes, uses
+`pipefail`, and keeps the build's exit status by redirecting its output to a log. `hook_check.py` passes it, and its
+tests (`tools/ci/test_hook_check.py`) hold it to that.
+
 ## Hygiene for every workflow
 
 - **Pin runner images** (`ubuntu-24.04`, `windows-2022`, `macos-14`), never `-latest`, which migrates silently
@@ -112,6 +164,7 @@ pull requests through rulesets.
 2. Add `paths-ignore` for documentation-only changes.
 3. Label long test suites `full`, and add `quick` and `full` test presets.
 4. Add `.ci/local.json`, and run `local_ci.py` before opening pull requests or at milestones.
+   Add the `hook-check` step to its `quick` level ("Local gates must self-test").
 5. Create the three labels (`gh label create`).
 6. Remove performance jobs from routine CI.
 7. Pin runner images and set timeouts.
