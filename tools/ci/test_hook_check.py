@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hook_check as hc  # noqa: E402
@@ -275,6 +276,75 @@ class TemplateTests(RepoCase):
     def test_a_new_branch_is_treated_as_code(self):
         result = self.push(f"refs/heads/new {self.sha()} refs/heads/new {'0' * 40}\n")
         self.assertNotEqual(result.returncode, 0)
+
+
+# A stand-in for the shared perf gate's `bench_check.py power`: the power state is faked through the environment, as the
+# real one does (SUB0PERF_FAKE_POWER), so no test depends on the machine's actual power state.
+FAKE_BENCH_CHECK = """import os, sys
+state = os.environ.get("SUB0PERF_FAKE_POWER", "ac")
+print("sub0perf: power: " + state)
+sys.exit(3 if state in ("battery", "saver") else 0)
+"""
+OLD_BENCH_CHECK = "import sys\nprint('usage: bench_check.py {run,check}')\nsys.exit(2)\n"
+BENCH_HOOK = "#!/bin/sh\ncat >/dev/null\npython tools/perf/bench_check.py gate --refs-from-stdin\n"
+
+
+class PowerGuardTests(RepoCase):
+    def add_bench_check(self, text):
+        path = self.repo / "tools" / "perf" / "bench_check.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def guard(self, fake=None):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SUB0PERF_FAKE_POWER", None)
+            if fake:
+                os.environ["SUB0PERF_FAKE_POWER"] = fake
+            return hc.check_power_guard(self.repo, self.write_hook(BENCH_HOOK))[0]
+
+    def test_a_hook_without_bench_check_is_skipped(self):
+        row = hc.check_power_guard(self.repo, self.write_hook(EMPTY_OK))[0]
+        self.assertEqual(row.status, hc.SKIP)
+
+    def test_mains_and_battery_both_pass(self):
+        self.add_bench_check(FAKE_BENCH_CHECK)
+        for fake, code in (("ac", 0), ("unknown", 0), ("battery", 3), ("saver", 3)):
+            row = self.guard(fake)
+            self.assertEqual(row.status, hc.PASS, fake)
+            self.assertIn(f"exits {code}", row.detail)
+
+    def test_a_gate_without_the_guard_fails(self):
+        self.add_bench_check(OLD_BENCH_CHECK)
+        row = self.guard("battery")
+        self.assertEqual(row.status, hc.FAIL)
+        self.assertIn("lacks the power-state guard", row.detail)
+
+    def test_an_unlocatable_bench_check_warns(self):
+        self.assertEqual(self.guard().status, hc.WARN)
+
+    def test_run_checks_includes_the_row(self):
+        self.add_bench_check(FAKE_BENCH_CHECK)
+        path = self.write_hook(BENCH_HOOK)
+        self.need_shell(path)
+        with mock.patch.dict(os.environ, {"SUB0PERF_FAKE_POWER": "battery"}):
+            self.assertEqual(self.rows()["power guard"].status, hc.PASS)
+
+
+class PowerSwitchTests(unittest.TestCase):
+    def test_nothing_set_is_quiet(self):
+        self.assertEqual(hc.check_power_switches({}), [])
+
+    def test_each_switch_warns(self):
+        env = {"SUB0PERF_FAKE_POWER": "battery", "SUB0MATH_PERF_ON_BATTERY": "1", "SUB0MATH_PERF_POWER_STRICT": "1"}
+        rows = hc.check_power_switches(env)
+        self.assertEqual([r.status for r in rows], [hc.WARN] * 3)
+        self.assertIn("faked", rows[0].detail)
+        self.assertIn("override", rows[1].detail)
+        self.assertIn("refused", rows[2].detail)
+
+    def test_the_empty_push_runs_without_the_switches(self):
+        env = hc.clean_environment({"SUB0PERF_FAKE_POWER": "battery", "SUB0MATH_PERF_ON_BATTERY": "1", "PATH": "x"})
+        self.assertEqual(env, {"PATH": "x"})
 
 
 class CommandLineTests(RepoCase):

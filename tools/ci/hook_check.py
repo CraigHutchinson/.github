@@ -14,6 +14,11 @@ See docs/ci-strategy.md, "Local gates must self-test". Checks, each a row of a p
     status masking  a static lint of the shell hooks: a pipeline whose status matters (`set -e`, a `$?` check, `||`)
                     but ends in a filter such as `tail` returns the filter's status, so a failed build passes, unless
                     `set -o pipefail` is on
+    power guard     where a hook uses the shared perf gate (`bench_check.py`), the gate supports the power-state guard:
+                    `bench_check.py power` runs and exits 0 (mains) or 3 (battery or battery saver); any other result
+                    means an older gate that would time on battery. Also a WARN for each power switch set in the
+                    environment (SUB0PERF_FAKE_POWER, SUB0MATH_PERF_ON_BATTERY, SUB0MATH_PERF_POWER_STRICT: tests and
+                    deliberate overrides only, never left on)
     deep self-test  the commands of the `"selftest"` list in `.ci/local.json`, the repository's own deep check (for
                     example one that drives its gate with synthetic pushes); a command that exits non-zero fails
 
@@ -36,6 +41,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ci_power  # noqa: E402
 import local_ci  # noqa: E402  (the config path and command expansion are shared with the local CI runner)
 
 HOOK = "pre-push"
@@ -345,7 +351,62 @@ def check_masking(repo: Path, active: Optional[Path]) -> list[Row]:
 
 
 # ---------------------------------------------------------------------------------------------------------
-# Check 4: deep self-test
+# Check 4: power guard
+
+
+def hook_texts(repo: Path, active: Optional[Path]) -> list[str]:
+    texts = []
+    for path in ([active] if active else []) + committed_hooks(repo):
+        try:
+            texts.append(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            pass
+    return texts
+
+
+def find_bench_check(repo: Path, texts: list[str]) -> Optional[Path]:
+    """The `bench_check.py` the hooks use: the repository's tools/perf copy, else a path named in a hook that exists."""
+    own = repo / "tools" / "perf" / "bench_check.py"
+    if own.is_file():
+        return own
+    for text in texts:
+        for m in re.finditer(r"""["']?([^\s"'=]*bench_check\.py)""", text):
+            candidate = Path(m.group(1).replace("\\", "/"))
+            for path in (candidate, repo / candidate):
+                if path.is_file():
+                    return path
+    return None
+
+
+def check_power_guard(repo: Path, active: Optional[Path], timeout: float = 60.0, runner: Callable = None) -> list[Row]:
+    """`bench_check.py power` must run and exit 0 or 3, for a repository whose hook uses bench_check.py."""
+    texts = hook_texts(repo, active)
+    if not any("bench_check.py" in t for t in texts):
+        return [Row(SKIP, "power guard", "no hook uses bench_check.py")]
+    script = find_bench_check(repo, texts)
+    if script is None:
+        return [Row(WARN, "power guard", "a hook uses bench_check.py but it could not be located to run `power`")]
+    argv = [sys.executable, str(script), "power"]
+    code, output = (runner or _run)(argv, repo, timeout)
+    tail = " | ".join(output.strip().splitlines()[-2:])
+    if code in (0, 3):
+        return [Row(PASS, "power guard", f"{script.name} power exits {code} ({'battery or saver' if code == 3 else 'mains'})"
+                    + (f": {tail}" if tail else ""))]
+    return [Row(FAIL, "power guard", f"{script.name} power exits {code} (want 0 or 3): this gate lacks the power-state guard "
+                                     f"and would time on battery; update the shared perf tooling" + (f": {tail}" if tail else ""))]
+
+
+def check_power_switches(environ: Optional[dict] = None) -> list[Row]:
+    found = ci_power.switches_set(environ)
+    return [Row(WARN, "power switches", f"{item} is set in the environment: " +
+                ("the power state is faked (tests only)" if item.startswith(ci_power.FAKE_VAR) else
+                 "timing on battery is allowed (a deliberate override only)" if item.startswith(ci_power.OVERRIDE_VAR) else
+                 "a push on battery is refused instead of deferred") + "; unset it unless this is deliberate")
+            for item in found]
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Check 5: deep self-test
 
 
 def selftest_commands(repo: Path) -> list:
@@ -421,6 +482,8 @@ def run_checks(repo: Path, timeout: float = DEFAULT_TIMEOUT, selftest: bool = Tr
     else:
         rows.append(Row(SKIP, "empty push", "no active hook to run"))
     rows += check_masking(repo, active)
+    rows += check_power_guard(repo, active)
+    rows += check_power_switches()
     if selftest:
         rows += run_selftest(repo)
     return rows

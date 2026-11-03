@@ -122,6 +122,7 @@ Rules for every pre-push gate:
    | active hook | A `pre-push` hook is active (`core.hooksPath` resolved, else `.git/hooks`); a committed `.githooks/pre-push` that is not the active one is reported |
    | empty push | The active hook, run with empty stdin as git runs it for an up-to-date push, in the repository with a clean environment, exits 0 within 30 s |
    | status masking | A static lint finds no pipeline whose status matters (`set -e`, a `$?` check, `||`, `if !`) that ends in a filter, unless `pipefail` is on |
+   | power guard | Where a hook uses `bench_check.py`, `bench_check.py power` runs and exits 0 or 3 (["Power state"](#power-state)); a WARN for each power switch set in the environment |
    | deep self-test | Every command of the `"selftest"` list in `.ci/local.json` exits 0 |
 
 6. **Run it in local CI `quick`.** Add a step to `.ci/local.json`, so a gate that stops working is found by the next
@@ -145,6 +146,49 @@ and `tests`, and activate it. It exits 0 on empty stdin and on deletions, skips 
 `pipefail`, and keeps the build's exit status by redirecting its output to a log. `hook_check.py` passes it, and its
 tests (`tools/ci/test_hook_check.py`) hold it to that.
 
+## Power state
+
+Timing on battery is not a fair comparison with a baseline recorded on mains: clocks, boost and the power plan all
+differ, and the run burns battery for a verdict nobody can trust. A gate that measures anyway reports a regression or a
+pass that means nothing. So, for every local performance gate and every wall-clock test:
+
+1. **Never measure on battery, and never pass.** On battery or in a battery saver, a performance gate **defers** and a
+   wall-clock test **skips**. Neither builds, measures or reports a pass for what it did not check, and the deferral
+   exits 0 so it never blocks a push. The state is `ac`, `battery` or `unknown`, plus whether a saver is on; `unknown`
+   (a desktop, a runner, a failed query) counts as mains but is reported as unknown.
+2. **The message names the override.** A deferral says why and how to measure anyway
+   (`on battery: performance not measured (deferred; ...). To measure anyway: set SUB0MATH_PERF_ON_BATTERY=1`).
+3. **An override is loud and never becomes a baseline.** A run under the override announces it on its first line and in
+   its summary, its record carries the power state, and no command that writes a baseline accepts such a record.
+   The override set on mains is reported as ignored, so a stale export is noticed.
+4. **Baselines are recorded on mains only.** A record or baseline carries the power state it was measured in; a
+   baseline without the field is mains; a mismatch between record and baseline makes absolute verdicts inconclusive.
+5. **Test the guard.** The guard has a self-test in the quick set, with the power state faked, like any other gate
+   logic (above). `hook_check.py` checks that a repository using the shared perf gate has the guard.
+
+Conventions, shared by every repository (they are the shared gate's names, in Sub0Math):
+
+| Convention | Meaning |
+|---|---|
+| ctest label `timing` | Marks every wall-clock test. `ctest -LE timing` is the untimed set |
+| `SKIP timing: <reason>` | What a timing test prints when it does not run, with the reason and the override |
+| `SUB0MATH_PERF_ON_BATTERY=1` | The override: measure on battery anyway. Flagged, and never a baseline |
+| `SUB0MATH_PERF_POWER_STRICT=1` | Strict mode: a push on battery is refused instead of deferred. Off by default |
+| `SUB0PERF_FAKE_POWER=ac\|battery\|unknown\|saver` | Replaces the power query. **Tests only**; set anywhere else it is a warning |
+| `bench_check.py power` | Prints the state and the switches in effect. Exit 0 on mains, **3 on battery or saver** |
+
+The local tools follow it:
+- `tools/ci/local_ci.py` prints the power state at the start of a run. On battery it adds `-LE timing` to its plain
+  `ctest` commands (a `--preset` is left alone, because a command-line filter would replace the preset's own exclusions),
+  and marks the saved record and the attestation description "untimed (on battery)". Under the override it runs
+  everything and marks the run "timed on battery (override)". It uses Sub0Math's `sub0perf.power` when the repository
+  has it, and a small fallback with the same states and variable names otherwise (`tools/ci/ci_power.py`).
+- `tools/ci/hook_check.py` has a `power guard` row (a hook that uses `bench_check.py` must support `bench_check.py power`,
+  exit 0 or 3) and warns for each of the three variables set in the environment. The empty-push check runs the hook
+  without them.
+- `templates/pre-push` needs nothing: it does not measure. A hook that calls a gate must let a deferral (exit 0) stand;
+  do not turn it into a failure by treating the gate's message as an error.
+
 ## Hygiene for every workflow
 
 - **Pin runner images** (`ubuntu-24.04`, `windows-2022`, `macos-14`), never `-latest`, which migrates silently
@@ -165,6 +209,7 @@ tests (`tools/ci/test_hook_check.py`) hold it to that.
 3. Label long test suites `full`, and add `quick` and `full` test presets.
 4. Add `.ci/local.json`, and run `local_ci.py` before opening pull requests or at milestones.
    Add the `hook-check` step to its `quick` level ("Local gates must self-test").
+   Label wall-clock tests `timing` and make them skip on battery ("Power state").
 5. Create the three labels (`gh label create`).
 6. Remove performance jobs from routine CI.
 7. Pin runner images and set timeouts.

@@ -168,5 +168,68 @@ class StatusTests(unittest.TestCase):
                 lc.load_last_run(Path(d), "full")
 
 
+class PowerTests(unittest.TestCase):
+    BATTERY = lc.ci_power.PowerState("battery", False, "fake")
+    SAVER = lc.ci_power.PowerState("ac", True, "fake")
+    AC = lc.ci_power.PowerState("ac", False, "fake")
+
+    def test_fake_states(self):
+        def state(value):
+            return lc.ci_power.power_state(environ={"SUB0PERF_FAKE_POWER": value})
+        self.assertEqual(state("battery").state, "battery")
+        self.assertTrue(state("saver").untrusted)
+        self.assertFalse(state("ac").untrusted)
+        self.assertEqual(state("unknown").state, "unknown")
+        self.assertFalse(state("unknown").untrusted)  # unknown counts as mains, but is reported
+
+    def test_switches_set(self):
+        self.assertEqual(lc.ci_power.switches_set({}), [])
+        self.assertEqual(lc.ci_power.switches_set({"SUB0MATH_PERF_ON_BATTERY": "1"}), ["SUB0MATH_PERF_ON_BATTERY=1"])
+
+    def test_exclude_timing(self):
+        self.assertEqual(lc.exclude_timing(["ctest", "--test-dir", "b"]), ["ctest", "--test-dir", "b", "-LE", "timing"])
+        self.assertEqual(lc.exclude_timing(["/usr/bin/ctest.exe", "-LE", "full"])[-1], "full|timing")
+        self.assertEqual(lc.exclude_timing(["ctest", "--label-exclude=full"])[-1], "--label-exclude=full|timing")
+
+    def test_exclude_timing_leaves_other_commands_and_presets_alone(self):
+        self.assertIsNone(lc.exclude_timing(["cmake", "--build", "b"]))
+        self.assertIsNone(lc.exclude_timing(["ctest", "--preset", "quick"]))  # a CLI filter would replace the preset's own
+        self.assertIsNone(lc.exclude_timing(["ctest", "--preset=quick"]))
+
+    def test_battery_run_excludes_timing_from_ctest_only(self):
+        run = RunTests().runner()
+        results = lc.run_level(CONFIG, "quick", Path("."), detect=fake_detect({"gcc": GCC}), runner=run, untimed=True)
+        ctest = [a for a, _ in run.calls if a[0] == "ctest"][0]
+        self.assertEqual(ctest[-2:], ["-LE", "timing"])
+        self.assertNotIn("-LE", [a for a, _ in run.calls if a[0] == "cmake"][0])
+        self.assertIn("-LE timing", results[0].note)
+
+    def test_mains_run_is_unchanged(self):
+        run = RunTests().runner()
+        lc.run_level(CONFIG, "quick", Path("."), detect=fake_detect({"gcc": GCC}), runner=run)
+        self.assertNotIn("-LE", [a for a, _ in run.calls if a[0] == "ctest"][0])
+
+    def test_mark(self):
+        self.assertEqual(lc.power_mark(self.AC), "")
+        self.assertEqual(lc.power_mark(self.BATTERY, {}), "untimed (on battery)")
+        self.assertEqual(lc.power_mark(self.SAVER, {}), "untimed (on battery)")
+        self.assertEqual(lc.power_mark(self.BATTERY, {"SUB0MATH_PERF_ON_BATTERY": "1"}), "timed on battery (override)")
+        self.assertEqual(lc.power_mark(self.AC, {"SUB0MATH_PERF_ON_BATTERY": "1"}), "")  # ignored on mains
+
+    def test_description_carries_the_mark_even_when_truncated(self):
+        rs = [lc.StepResult(f"step-{i}-" + "x" * 20, "passed", "GCC 16", (1, 1)) for i in range(10)]
+        d = lc.describe("quick", rs, "untimed (on battery)")
+        self.assertLessEqual(len(d), lc.DESCRIPTION_LIMIT)
+        self.assertTrue(d.endswith("; untimed (on battery)"))
+        self.assertEqual(lc.describe("quick", [lc.StepResult("py", "passed")], "untimed (on battery)"),
+                         "py: ok; untimed (on battery)")
+
+    def test_record_carries_the_power_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            lc.save_last_run(Path(d), "quick", "abc", [lc.StepResult("py", "passed")], "desc",
+                             {**self.BATTERY.as_dict(), "mark": "untimed (on battery)"})
+            self.assertEqual(lc.load_last_run(Path(d), "quick")["power"]["mark"], "untimed (on battery)")
+
+
 if __name__ == "__main__":
     unittest.main()

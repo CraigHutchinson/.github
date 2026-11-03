@@ -30,6 +30,12 @@ A STEP is an object:
 On success a commit status `local-ci/<level>` is posted with `gh api repos/{owner}/{repo}/statuses/{sha}`, but
 only when the commit exists on the remote and the working tree is clean. Otherwise it says how to post after
 pushing (`--post-only`). Standard library only.
+
+Power state (docs/ci-strategy.md, "Power state"): the run starts by printing it. On battery (or in a battery saver) the
+timings are not comparable with a mains baseline, so `-LE timing` is added to each plain `ctest` command (an existing
+`-LE` is combined; a `--preset` is left alone, since a command-line filter would replace the preset's own), the
+summary says "untimed (on battery)", and the saved record and the attestation description carry the same words.
+`SUB0MATH_PERF_ON_BATTERY=1` runs everything anyway; the run is then marked "timed on battery (override)".
 """
 from __future__ import annotations
 
@@ -45,6 +51,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ci_power  # noqa: E402  (Sub0Math's power module when the repository has it, else a small fallback)
 
 CONFIG_PATH = Path(".ci") / "local.json"
 LAST_RUN_TEMPLATE = ".ci/last-{level}.json"
@@ -191,6 +200,28 @@ class StepResult:
     note: str = ""
 
 
+TIMING_LABEL = "timing"  # the ctest label of wall-clock tests (docs/ci-strategy.md, "Power state")
+
+
+def exclude_timing(argv: list[str]) -> Optional[list[str]]:
+    """The ctest command with the `timing` label excluded (an existing -LE is combined), or None when it can't be done cleanly.
+
+    None for a command that is not ctest and for one with `--preset`: a command-line filter replaces the preset's own, which
+    could re-enable tests the preset excludes.
+    """
+    if not argv or Path(argv[0]).stem != "ctest" or any(a == "--preset" or a.startswith("--preset=") for a in argv):
+        return None
+    out = list(argv)
+    for i, a in enumerate(out):
+        if a in ("-LE", "--label-exclude") and i + 1 < len(out):
+            out[i + 1] = f"{out[i + 1]}|{TIMING_LABEL}"
+            return out
+        if a.startswith("--label-exclude="):
+            out[i] = f"{a}|{TIMING_LABEL}"
+            return out
+    return out + ["-LE", TIMING_LABEL]
+
+
 def run_command(argv: list[str], cwd: Path, env: dict, echo: bool = True) -> tuple[int, str]:
     """Run, streaming output to the console while capturing it. Returns (exit code, output)."""
     if echo:
@@ -209,7 +240,7 @@ def run_command(argv: list[str], cwd: Path, env: dict, echo: bool = True) -> tup
 
 
 def run_step(step: Step, level: str, repo: Path, compilers: dict, dry_run: bool = False,
-             runner: Callable = run_command) -> StepResult:
+             runner: Callable = run_command, untimed: bool = False) -> StepResult:
     comp = None
     if step.requires_env and not os.environ.get(step.requires_env):
         return StepResult(step.name, "skipped", note=f"set {step.requires_env} to run")
@@ -232,6 +263,11 @@ def run_step(step: Step, level: str, repo: Path, compilers: dict, dry_run: bool 
     print(f"== {step.name}" + (f" [{comp.version}]" if comp else ""), flush=True)
     for command in step.commands:
         argv = expand(command, values)
+        if untimed:
+            narrowed = exclude_timing(argv)
+            if narrowed:
+                argv = narrowed
+                result.note = f"-LE {TIMING_LABEL} (on battery)"
         if dry_run:
             print("  (dry-run) $ " + " ".join(shlex.quote(a) for a in argv))
             continue
@@ -254,7 +290,7 @@ def run_step(step: Step, level: str, repo: Path, compilers: dict, dry_run: bool 
 
 
 def run_level(config: dict, level: str, repo: Path, only: Optional[list] = None, dry_run: bool = False,
-              detect: Callable = detect_compiler, runner: Callable = run_command) -> list[StepResult]:
+              detect: Callable = detect_compiler, runner: Callable = run_command, untimed: bool = False) -> list[StepResult]:
     steps = steps_for(config, level)
     if only:
         steps = [s for s in steps if s.name in only]
@@ -265,7 +301,7 @@ def run_level(config: dict, level: str, repo: Path, only: Optional[list] = None,
         c = detect(kind)
         if c:
             compilers[kind] = c
-    return [run_step(s, level, repo, compilers, dry_run, runner) for s in steps]
+    return [run_step(s, level, repo, compilers, dry_run, runner, untimed) for s in steps]
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -285,8 +321,15 @@ def summarise(results: list[StepResult]) -> str:
     return "\n".join(lines)
 
 
-def describe(level: str, results: list[StepResult]) -> str:
-    """Status description, e.g. 'GCC 16 gcc: ctest full 3/3; Clang 22 clang-fma: ctest full 3/3'."""
+def power_mark(state: "ci_power.PowerState", environ: Optional[dict] = None) -> str:
+    """'' on mains; 'untimed (on battery)' when timing tests were left out; 'timed on battery (override)' when they were not."""
+    if not state.untrusted:
+        return ""
+    return "timed on battery (override)" if ci_power.override(environ) else ci_power.UNTIMED_LABEL
+
+
+def describe(level: str, results: list[StepResult], mark: str = "") -> str:
+    """Status description, e.g. 'GCC 16 gcc: ctest full 3/3; Clang 22 clang-fma: ctest full 3/3'; `mark` (power) survives truncation."""
     parts = []
     for r in results:
         if r.status != "passed":
@@ -294,7 +337,9 @@ def describe(level: str, results: list[StepResult]) -> str:
         label = f"{r.compiler} {r.name}".strip() if r.compiler else r.name
         parts.append(f"{label}: ctest {level} {r.ctest[0]}/{r.ctest[1]}" if r.ctest else f"{label}: ok")
     text = "; ".join(parts) or "no steps"
-    return text if len(text) <= DESCRIPTION_LIMIT else text[:DESCRIPTION_LIMIT - 3] + "..."
+    tail = f"; {mark}" if mark else ""
+    room = DESCRIPTION_LIMIT - len(tail)
+    return (text if len(text) <= room else text[:room - 3] + "...") + tail
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -337,11 +382,13 @@ def _gh(args: list) -> int:
         return 127
 
 
-def save_last_run(repo: Path, level: str, sha: str, results: list[StepResult], description: str) -> Path:
+def save_last_run(repo: Path, level: str, sha: str, results: list[StepResult], description: str,
+                  power: Optional[dict] = None) -> Path:
     path = repo / LAST_RUN_TEMPLATE.format(level=level)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "sha": sha, "level": level, "ok": overall_ok(results), "description": description,
+        **({"power": power} if power else {}),
         "results": [r.__dict__ for r in results]}, indent=2), encoding="utf-8")
     return path
 
@@ -403,17 +450,25 @@ def main(argv: Optional[list] = None) -> int:
             if last["sha"] != sha:
                 raise CiError(f"the recorded run verified {last['sha'][:12]} but HEAD is {sha[:12]}; run again")
             return attest(repo, args.level, sha, last["description"], args.allow_dirty)
-        results = run_level(config, args.level, repo, args.only, args.dry_run)
+        state = ci_power.power_state(repo)
+        mark = power_mark(state)
+        print(f"local_ci: power: {state.describe()}" + (f"; {mark}" if mark else ""))
+        for switch in ci_power.switches_set():
+            print(f"local_ci: WARNING: {switch} is set in the environment (a power switch; leave it unset except for a deliberate run)")
+        if mark == ci_power.UNTIMED_LABEL:
+            print(f"local_ci: on battery: ctest commands exclude the '{TIMING_LABEL}' label; "
+                  f"to time anyway set {ci_power.OVERRIDE_VAR}=1 (the run is flagged and can't become a baseline)")
+        results = run_level(config, args.level, repo, args.only, args.dry_run, untimed=mark == ci_power.UNTIMED_LABEL)
     except CiError as e:
         print(f"local_ci: {e}", file=sys.stderr)
         return 2
 
     if args.dry_run:
         return 0
-    print(f"\nlocal-ci/{args.level} at {sha[:12]}:\n{summarise(results)}")
+    print(f"\nlocal-ci/{args.level} at {sha[:12]}" + (f" [{mark}]" if mark else "") + f":\n{summarise(results)}")
     ok = overall_ok(results)
-    description = describe(args.level, results)
-    save_last_run(repo, args.level, sha, results, description)
+    description = describe(args.level, results, mark)
+    save_last_run(repo, args.level, sha, results, description, {**state.as_dict(), "mark": mark} if mark else None)
     if not ok:
         print("\nFAILED: nothing posted.", file=sys.stderr)
         return 1
