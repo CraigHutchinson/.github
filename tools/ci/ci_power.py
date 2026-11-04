@@ -37,6 +37,8 @@ class PowerState:
     state: str = UNKNOWN
     saver: bool = False
     source: str = ""
+    mode_ac: str = ""  # Windows power-mode overlay on mains / on battery (reported, never changed); "" = unknown
+    mode_dc: str = ""
 
     @property
     def untrusted(self) -> bool:
@@ -44,7 +46,9 @@ class PowerState:
         return self.state == BATTERY or self.saver
 
     def describe(self) -> str:
-        return f"{self.state}{', battery saver' if self.saver else ''}" + (f" ({self.source})" if self.source else "")
+        modes = f"power mode {self.mode_ac} (mains) / {self.mode_dc} (battery)" if self.mode_ac or self.mode_dc else ""
+        extra = "; ".join(x for x in (self.source, modes) if x)
+        return f"{self.state}{', battery saver' if self.saver else ''}" + (f" ({extra})" if extra else "")
 
     def as_dict(self) -> dict:
         return {"state": self.state, "saver": self.saver}
@@ -69,11 +73,34 @@ class _SystemPowerStatus(ctypes.Structure):
                 ("SystemStatusFlag", ctypes.c_ubyte), ("BatteryLifeTime", ctypes.c_ulong), ("BatteryFullLifeTime", ctypes.c_ulong)]
 
 
+# Windows power-mode overlays (the Settings > Power & battery slider), as in Sub0Math's sub0perf.power. No overlay value is Balanced.
+_OVERLAYS = {"961cc777-2547-4f9d-8174-7d86181b8a7a": "Best power efficiency", "3af9b8d9-7c97-431d-ad78-34a8bfea439f": "Better performance",
+             "ded574b5-45a0-4f42-8737-46345c09c238": "Best performance", "00000000-0000-0000-0000-000000000000": "Balanced"}
+
+
+def _windows_modes() -> tuple[str, str]:
+    """(mains, battery) power-mode overlay names from the registry (read only), '' where unreadable."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes") as key:
+            names = []
+            for value in ("ActiveOverlayAcPowerScheme", "ActiveOverlayDcPowerScheme"):
+                try:
+                    guid = str(winreg.QueryValueEx(key, value)[0]).strip("{}").lower()
+                except FileNotFoundError:
+                    guid = "00000000-0000-0000-0000-000000000000"
+                names.append(_OVERLAYS.get(guid, guid))
+            return names[0], names[1]
+    except (OSError, ImportError, ValueError):
+        return "", ""
+
+
 def _windows() -> PowerState:
     status = _SystemPowerStatus()
     if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status)):
         return PowerState(source="windows")
-    return PowerState({0: BATTERY, 1: AC}.get(status.ACLineStatus, UNKNOWN), status.SystemStatusFlag == 1, "windows")
+    ac, dc = _windows_modes()
+    return PowerState({0: BATTERY, 1: AC}.get(status.ACLineStatus, UNKNOWN), status.SystemStatusFlag == 1, "windows", ac, dc)
 
 
 def _read(path: Path) -> str:
@@ -134,7 +161,8 @@ def power_state(repo: Optional[Path] = None, environ: Optional[dict] = None) -> 
     if shared is not None:
         try:
             found = shared.power_state(environ)
-            return PowerState(found.state, bool(found.saver), f"{found.source}; sub0perf" if found.source else "sub0perf")
+            return PowerState(found.state, bool(found.saver), f"{found.source}; sub0perf" if found.source else "sub0perf",
+                              getattr(found, "mode_ac", ""), getattr(found, "mode_dc", ""))
         except Exception:  # noqa: BLE001
             pass
     if environ.get(FAKE_VAR):

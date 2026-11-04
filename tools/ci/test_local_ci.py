@@ -182,6 +182,15 @@ class PowerTests(unittest.TestCase):
         self.assertEqual(state("unknown").state, "unknown")
         self.assertFalse(state("unknown").untrusted)  # unknown counts as mains, but is reported
 
+    def test_the_power_mode_is_reported_by_name(self):
+        state = lc.ci_power.PowerState("ac", False, "windows", "Best power efficiency", "Balanced")
+        self.assertEqual(state.describe(), "ac (windows; power mode Best power efficiency (mains) / Balanced (battery))")
+        self.assertEqual(self.AC.describe(), "ac (fake)")  # unknown on other platforms: nothing is said
+        self.assertEqual(lc.ci_power._OVERLAYS["961cc777-2547-4f9d-8174-7d86181b8a7a"], "Best power efficiency")
+        if sys.platform == "win32":
+            ac, dc = lc.ci_power._windows_modes()
+            self.assertTrue(ac and dc)
+
     def test_switches_set(self):
         self.assertEqual(lc.ci_power.switches_set({}), [])
         self.assertEqual(lc.ci_power.switches_set({"SUB0MATH_PERF_ON_BATTERY": "1"}), ["SUB0MATH_PERF_ON_BATTERY=1"])

@@ -165,6 +165,13 @@ pass that means nothing. So, for every local performance gate and every wall-clo
    baseline without the field is mains; a mismatch between record and baseline makes absolute verdicts inconclusive.
 5. **Test the guard.** The guard has a self-test in the quick set, with the power state faked, like any other gate
    logic (above). `hook_check.py` checks that a repository using the shared perf gate has the guard.
+6. **Mains is not full speed: check the sustained speed.** A mains machine can be throttled (a vendor power mode, a
+   charging cap, thermal limits, or the Windows "Best power efficiency" power mode, which holds boost for only about 3 s of
+   load and then falls to about 0.4x). A gate or timing test therefore compares the machine with a reference by its
+   **sustained** speed, a calibration kernel run continuously for several seconds in one process, and not only by a
+   burst reading of a fraction of a second, which runs inside the boost window and reads normal. A throttled machine defers
+   or skips exactly like battery, the same override applies, and the message names the Windows power mode (read only,
+   never changed) with its fix: set Balanced or Best performance.
 
 Conventions, shared by every repository (they are the shared gate's names, in Sub0Math):
 
@@ -175,14 +182,15 @@ Conventions, shared by every repository (they are the shared gate's names, in Su
 | `SUB0MATH_PERF_ON_BATTERY=1` | The override: measure on battery anyway. Flagged, and never a baseline |
 | `SUB0MATH_PERF_POWER_STRICT=1` | Strict mode: a push on battery is refused instead of deferred. Off by default |
 | `SUB0PERF_FAKE_POWER=ac\|battery\|unknown\|saver` | Replaces the power query. **Tests only**; set anywhere else it is a warning |
-| `bench_check.py power` | Prints the state and the switches in effect. Exit 0 on mains, **3 on battery or saver** |
+| `bench_check.py power` | Prints the state, the Windows power mode and the switches in effect. Exit 0 on mains, **3 on battery, saver or a throttled machine** (with `--exe` and `--baseline`) |
 
 The local tools follow it:
 - `tools/ci/local_ci.py` prints the power state at the start of a run. On battery it adds `-LE timing` to its plain
   `ctest` commands (a `--preset` is left alone, because a command-line filter would replace the preset's own exclusions),
   and marks the saved record and the attestation description "untimed (on battery)". Under the override it runs
   everything and marks the run "timed on battery (override)". It uses Sub0Math's `sub0perf.power` when the repository
-  has it, and a small fallback with the same states and variable names otherwise (`tools/ci/ci_power.py`).
+  has it, and a small fallback with the same states and variable names otherwise (`tools/ci/ci_power.py`); both report the
+  Windows power mode (mains and battery) beside the state, and neither changes it.
 - `tools/ci/hook_check.py` has a `power guard` row (a hook that uses `bench_check.py` must support `bench_check.py power`,
   exit 0 or 3) and warns for each of the three variables set in the environment. The empty-push check runs the hook
   without them.
