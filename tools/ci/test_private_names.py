@@ -180,6 +180,14 @@ class FilesAndMainTest(RepoCase):
         self.assertTrue(hits[0].where.endswith("t.txt:2"))
         self.assertIn("binary, offset 2", hits[1].where)
 
+    def test_scan_files_checks_the_file_name_not_the_folders(self):
+        self.write("quuxwidget/ok.txt", "clean
+")
+        self.write("plain/quuxwidget.txt", "clean
+")
+        self.assertEqual(pn.scan_files(self.matcher, [str(self.repo / "quuxwidget" / "ok.txt")]), [])
+        self.assertEqual([h.where.endswith("(file name)") for h in pn.scan_files(self.matcher, [str(self.repo / "plain" / "quuxwidget.txt")])], [True])
+
     def run_main(self, *args, names=None):
         listing = self.repo.parent / "names.txt"
         if names is not None:
