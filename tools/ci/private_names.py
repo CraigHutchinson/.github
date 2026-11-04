@@ -198,8 +198,8 @@ def scan_range(repo: str, matcher: Matcher, revs: list[str], warn=print) -> list
 def scan_files(matcher: Matcher, paths: list[str]) -> list[Hit]:
     hits = []
     for path in paths:
-        for name in matcher.in_text(path):
-            hits.append(Hit(f"{path} (path)", name))
+        for name in matcher.in_text(Path(path).name):   # the file name, not the folders it sits in
+            hits.append(Hit(f"{path} (file name)", name))
         data = Path(path).read_bytes()
         if b"\0" in data[:8000]:
             hits += [Hit(f"{path} (binary, offset {offset})", name) for name, offset in matcher.in_bytes(data)]
