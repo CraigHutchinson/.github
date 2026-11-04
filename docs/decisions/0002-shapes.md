@@ -20,7 +20,7 @@ used yet.
 2. **Grow by use.** A shape or query is added when a consumer needs it, adopted by that consumer in the
    same change, and its API refined by using it. The first slice is what Sub0Physics already used:
    `Sphere<T, N>` (`Circle<T>`), `Segment<T, N>` with `closestPoint`, and `boundingBox` for both, next to
-   the existing `Aabb`. Its terrain clearance query and BikeDynamics' terrain probe now take a `Circle`.
+   the existing `Aabb`. Its terrain clearance query and a private consumer's terrain probe now take a `Circle`.
 3. **Conversions are functions, not types.** A shape becomes triangles through `toMesh(shape, ...)`.
 4. **Placement is separate from shape.** A shape does not store its pose; a body's pose places it. A
    `Posed<S>` pairing is added when the first consumer needs one.

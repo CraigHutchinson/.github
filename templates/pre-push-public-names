@@ -4,13 +4,13 @@
 # Copy to .githooks/pre-push and activate it once per clone:  git config core.hooksPath .githooks
 # The forbidden names live in a local untracked list (see tools/ci/private_names.py and docs/ci-strategy.md,
 # "Public repositories never name private ones"); this file holds none. Without the list the check passes with a note.
-# The script is found in $KISMO_CI_DIR, else in a sibling clone of the .github repository. If neither is there the hook warns
+# The script is found in $KISMO_CI_DIR, else in a sibling clone of the .github repository (or in this repository's own tools/ci). If neither is there the hook warns
 # and lets the push through (a contributor without the clone is not blocked). `git push --no-verify` skips the hook.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 guard=""
-for dir in "${KISMO_CI_DIR:-}" "$root/../CraigHutchinson.github/tools/ci"; do
+for dir in "${KISMO_CI_DIR:-}" "$root/../CraigHutchinson.github/tools/ci" "$root/tools/ci"; do
     if [ -n "$dir" ] && [ -f "$dir/private_names.py" ]; then guard="$dir/private_names.py"; break; fi
 done
 if [ -z "$guard" ]; then

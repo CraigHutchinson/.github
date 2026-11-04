@@ -37,7 +37,7 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(lc.parse_ctest("nothing"))
 
     def test_remote_urls(self):
-        self.assertEqual(lc.parse_remote("https://github.com/KismoTech/BikeDynamics.git"), ("KismoTech", "BikeDynamics"))
+        self.assertEqual(lc.parse_remote("https://github.com/ExampleOrg/PrivateThing.git"), ("ExampleOrg", "PrivateThing"))
         self.assertEqual(lc.parse_remote("git@github.com:CraigHutchinson/Sub0Math.git"), ("CraigHutchinson", "Sub0Math"))
         with self.assertRaises(lc.CiError):
             lc.parse_remote("https://example.com/x/y")

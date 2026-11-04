@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (2026-10-19)
 - **Owner:** Craig Hutchinson
-- **Builds on:** [ADR 0001](0001-sub0math.md), [ADR 0002](0002-shapes.md); BikeDynamics' terrain design
+- **Builds on:** [ADR 0001](0001-sub0math.md), [ADR 0002](0002-shapes.md); a private bike-dynamics consumer's terrain design
   (private) and KismoEngine's runtime goals
 
 ## The question
@@ -132,7 +132,7 @@ What we take on: a real engineering effort, with risk. That risk is controlled b
 
 1. **Sub0Physics owns the dynamics core.** It is a reduced-coordinate multibody tree with typed force
    elements that supply Jacobians, a small constraint layer, implicit integration, deterministic
-   stepping and built-in reaction and work accounting. BikeDynamics builds the bike, wheel, rider and
+   stepping and built-in reaction and work accounting. The private bike-dynamics consumer builds the bike, wheel, rider and
    contact models on it; the product runtime links no third-party dynamics engine.
 2. **The model description is ours.** Bodies, joints, elements, limits and contact sites are
    described in Sub0Physics types (units, roles), not in MJCF. That description is the asset that
@@ -178,5 +178,5 @@ natively.
   analytic references, energy ledgers, convergence tests, the perf gate, and now the MuJoCo reference.
 - BikeLab can keep MuJoCo in the browser lab. The lab proves models; the product owns their
   implementation. Parity tooling bridges the two.
-- Licences stay clean: no runtime engine dependency in proprietary BikeDynamics or AGPL/commercial
+- Licences stay clean: no runtime engine dependency in the proprietary bike-dynamics consumer or AGPL/commercial
   KismoEngine. MuJoCo (Apache-2.0) is used only in test tooling.

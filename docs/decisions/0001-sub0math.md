@@ -3,7 +3,7 @@
 - **Status:** Accepted (2026-10-15). Implemented in [Sub0Math](https://github.com/CraigHutchinson/Sub0Math)
 - **Owner:** Craig Hutchinson
 - **Applies to:** every Sub0 library, and to KismoTech projects through them (KismoCore, KismoEngine,
-  KismoEdge, BikeDynamics, products), and Crucible
+  a private embedded project, a private bike-dynamics consumer, products), and Crucible
 
 ## Context
 
@@ -71,7 +71,7 @@ double raw = height;                 // compile error: no implicit unwrap
   double aliases and literals for simulation state, accumulated time, world positions and energy budgets
   (BikeLab's float32 solver trial reversed step-refinement trends; a float clock cannot resolve 0.5 ms
   after a few hours). Float widens to double implicitly; double narrows only explicitly. Fixed point
-  follows with KismoEdge.
+  follows with the private embedded project.
 - **Units are exact ratios to SI** (millimetres = 1/1000, degrees = pi/180), so conversions round once:
   `millimetres(350.0)` is exactly the double nearest 0.35.
 - `std::chrono` stays for wall-clock and scheduling time (Sub0Pipeline, Sub0Log); `sub0math::Time` is
@@ -110,10 +110,10 @@ makeBox(1_m, 5_m, 6_m);                       // compile error: role not named
 
 ## Consequences
 
-- Sub0Physics, Sub0HexGrid, KismoEngine, Crucible and BikeDynamics share one `Vec`/`Point`. Migration:
+- Sub0Physics, Sub0HexGrid, KismoEngine, Crucible and the private bike-dynamics consumer share one `Vec`/`Point`. Migration:
   `sub0physics::Point2` and `sub0hexgrid::Point` become the Sub0Math types; Sub0Physics' element and setup
   APIs move to quantities (for example `AxialSpringDamper{Force preload, Stiffness k, ...}`), and
-  BikeDynamics' setups follow, with parity tests unchanged.
+  the consumer's setups follow, with parity tests unchanged.
 - Each new library or API change is reviewed against "quantities at the interface, roles for same-typed
   parameters". The Sub0 style profile gains a rule for it.
 - Compile-time cost is measured on Sub0Physics before and after adoption and recorded here. If it is
@@ -125,7 +125,7 @@ makeBox(1_m, 5_m, 6_m);                       // compile error: role not named
 1. **Bare numbers in physical roles:** a unit is always required (`Height{1_m}`); `Height{1}` does not
    compile. Bare numbers remain fine for roles over plain numbers (`RetryCount{3}`).
 2. **Dimensions in v1:** length, mass, time, angle and temperature. Electric current and amount of
-   substance arrive with their first consumer (KismoEdge sensors).
+   substance arrive with their first consumer (the private embedded project's sensors).
 3. **Matrix layout:** column-major, matching GPU and Filament conventions.
 4. **Float or double:** float by default, double by explicit choice (above).
 5. **Performance tooling** (benchmark runner, per-host budgets, VTune/Advisor/perf targets, vectorization
@@ -136,5 +136,5 @@ makeBox(1_m, 5_m, 6_m);                       // compile error: role not named
 ## Follow-ups
 
 - Primitive shapes and their purposes (bounding, collision, render meshes): [ADR 0002](0002-shapes.md).
-- Station setups in BikeDynamics move to quantities and roles.
+- Station setups in the private bike-dynamics consumer move to quantities and roles.
 - Sub0HexGrid adopts `Point2d`, coordinated with Crucible's pin.

@@ -5,6 +5,7 @@
     python private_names.py --range <a>..<b>            # every commit in a range, as pushed
     python private_names.py --pre-push                  # reads git's pre-push stdin (refs being pushed)
     python private_names.py --files PATH [PATH ...]     # whole files, e.g. a built .wasm or an archive
+    python private_names.py --tree                      # every tracked file at HEAD: content and path (the whole-tree sweep)
     options: --repo DIR (default .), --names-file FILE, --require-list
 
 The forbidden names are read from a LOCAL, UNTRACKED source and are never published (not in this repository, not in a CI
@@ -21,6 +22,9 @@ What is scanned: the lines ADDED by the diff (text files, reported as file:line)
 changed binary file (reported as file: binary at offset N; ASCII and UTF-16 spellings), the changed file PATHS, and for a pushed
 range the commit messages. In a range every commit is scanned, not the net change: a name added in one commit and removed in the
 next is still in the history that gets published.
+
+`--tree` scans the whole tracked tree at HEAD, not a diff: every file path, and every file's content (text lines as file:line,
+binary files by ASCII and UTF-16 spelling). It finds mentions committed before the guard existed. History is not scanned.
 
 With no list configured the check passes and says so (a contributor without access to the private list is not blocked); give
 `--require-list` where a missing list should fail. Exit status: 0 clean (or no list), 1 a name found, 2 usage or git error.
@@ -209,6 +213,35 @@ def scan_files(matcher: Matcher, paths: list[str]) -> list[Hit]:
     return hits
 
 
+def scan_tree(repo: str, matcher: Matcher, warn=print) -> list[Hit]:
+    """Every file tracked at HEAD: its path, then its content (text by line, binary by ASCII and UTF-16 offset)."""
+    hits: list[Hit] = []
+    listing = git(repo, "ls-tree", "-r", "-z", "--full-tree", "HEAD", text=False)
+    entries = []   # (path, blob sha); symlinks and submodules hold no scannable content
+    for record in listing.split(b"\0"):
+        if not record:
+            continue
+        meta, _, raw_path = record.partition(b"\t")
+        mode, kind, sha = meta.decode().split()
+        path = raw_path.decode("utf-8", "replace")
+        for name in matcher.in_text(path):
+            hits.append(Hit(f"{path} (path)", name))
+        if kind == "blob" and mode != "120000":
+            entries.append((path, sha))
+    for path, sha in entries:
+        size = int(git(repo, "cat-file", "-s", sha).strip() or 0)
+        if size > MAX_BLOB:
+            warn(f"private-names: WARNING: {path} is {size:,} bytes; too large to scan, skipped")
+            continue
+        blob = git(repo, "cat-file", "blob", sha, text=False)
+        if b"\0" in blob[:8000] or blob.startswith((b"\xff\xfe", b"\xfe\xff")):
+            hits += [Hit(f"{path} (binary, offset {offset})", name) for name, offset in matcher.in_bytes(blob)]
+        else:
+            for number, line in enumerate(blob.decode("utf-8", "replace").splitlines(), 1):
+                hits += [Hit(f"{path}:{number}", name) for name in matcher.in_text(line)]
+    return hits
+
+
 def pushed_ranges(repo: str, stdin_text: str) -> list[list[str]]:
     """The rev-list arguments for the refs git is pushing (its pre-push stdin: `<local ref> <local sha> <remote ref> <remote sha>`).
     A new branch, or a remote commit we lack, covers the commits no remote-tracking branch has."""
@@ -241,6 +274,7 @@ def main(argv=None) -> int:
     mode.add_argument("--staged", action="store_true", help="the staged diff")
     mode.add_argument("--range", metavar="REVS", help="a rev-list range such as origin/main..HEAD")
     mode.add_argument("--pre-push", action="store_true", help="read git's pre-push stdin")
+    mode.add_argument("--tree", action="store_true", help="every tracked file at HEAD (whole-tree sweep)")
     mode.add_argument("--files", nargs="+", metavar="PATH", help="scan whole files")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--names-file", help="read the names from this file instead of the usual places")
@@ -257,6 +291,8 @@ def main(argv=None) -> int:
             return report(scan_staged(args.repo, matcher), names_from, "the staged changes")
         if args.range:
             return report(scan_range(args.repo, matcher, args.range.split()), names_from, f"range {args.range}")
+        if args.tree:
+            return report(scan_tree(args.repo, matcher), names_from, "the tracked tree at HEAD")
         if args.files:
             return report(scan_files(matcher, args.files), names_from, f"{len(args.files)} file(s)")
         ranges = pushed_ranges(args.repo, sys.stdin.read())

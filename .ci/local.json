@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "description": ".github local checks (docs/ci-strategy.md); run: python tools/ci/local_ci.py --level quick",
+  "levels": {
+    "quick": {
+      "steps": [
+        {
+          "name": "python-tests",
+          "commands": [
+            "{python} -m unittest discover -s tools/ci"
+          ]
+        },
+        {
+          "name": "private-names",
+          "commands": [
+            "{python} {ci_dir}/private_names.py --staged --repo {repo}",
+            "{python} {ci_dir}/private_names.py --tree --repo {repo}"
+          ]
+        }
+      ]
+    },
+    "full": {
+      "steps": [
+        {
+          "name": "python-tests",
+          "commands": [
+            "{python} -m unittest discover -s tools/ci"
+          ]
+        },
+        {
+          "name": "private-names",
+          "commands": [
+            "{python} {ci_dir}/private_names.py --staged --repo {repo}",
+            "{python} {ci_dir}/private_names.py --tree --repo {repo}"
+          ]
+        }
+      ]
+    }
+  }
+}

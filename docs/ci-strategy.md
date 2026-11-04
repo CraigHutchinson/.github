@@ -201,7 +201,7 @@ The local tools follow it:
 
 A public repository must not name or link a private repository, in a comment, a document, a commit message, a path or a built
 artefact. `tools/ci/private_names.py` checks the staged diff (`--staged`), a pushed range (`--pre-push`, from a git hook) or
-whole files (`--files`, for a built `.wasm` or archive) against a list of forbidden names, case-insensitively, and reports the
+whole files (`--files`, for a built `.wasm` or archive) or the whole tracked tree at HEAD (`--tree`, a sweep for mentions committed before the guard existed) against a list of forbidden names, case-insensitively, and reports the
 file and line. In a range every commit is scanned, not the net change, because a name added and then removed is still in the
 published history.
 
@@ -211,6 +211,9 @@ The list is **local and untracked**, so the forbidden names are never published:
 a workflow or a secret. With no list the check passes and says `NOT CHECKED`, so a contributor without the list is not blocked;
 `--require-list` makes that a failure. Wire it into a public repository's pre-push hook as `templates/pre-push-public-names`
 does (a hook that finds the script in a sibling clone of this repository, or at `$KISMO_CI_DIR`).
+Where a perf gate already owns `.git/hooks/pre-push`, install the template as `.git/hooks/pre-push.user`, which that hook runs first.
+Each public repository also lists a `private-names` step (`--staged`, then `--tree`) in the `quick` level of `.ci/local.json`, so a
+mention that slips past the hook is found by the next local run.
 
 ## Hygiene for every workflow
 
@@ -237,4 +240,4 @@ does (a hook that finds the script in a sibling clone of this repository, or at 
 6. Remove performance jobs from routine CI.
 7. Pin runner images and set timeouts.
 
-The reference implementations are Sub0Math, Sub0Physics and KismoTech/BikeDynamics.
+The reference implementations are Sub0Math, Sub0Physics and a private bike-dynamics consumer.

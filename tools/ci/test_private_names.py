@@ -172,6 +172,27 @@ class RangeTest(RepoCase):
         self.assertEqual(known, [[f"{head}..{head}"]])
 
 
+class TreeTest(RepoCase):
+    def test_clean_tree(self):
+        self.assertEqual(pn.scan_tree(str(self.repo), self.matcher), [])
+
+    def test_existing_content_path_and_binary_are_found(self):
+        self.write("docs/a.md", "ok\nsee zorblax-secret here\n")
+        self.write("src/quuxwidget_notes.txt", "clean")
+        self.write("b.bin", b"\0\0Zorblax-Secret")
+        self.write("u.bin", "AcmeCorp/Hidden Thing".encode("utf-16-le"))
+        self.commit("add")
+        where = sorted(h.where for h in pn.scan_tree(str(self.repo), self.matcher))
+        self.assertEqual(where, ["b.bin (binary, offset 2)", "docs/a.md:2", "src/quuxwidget_notes.txt (path)", "u.bin (binary, offset 0)"])
+
+    def test_only_head_is_scanned(self):
+        self.write("a.txt", "quuxwidget\n")
+        self.commit("add")
+        self.write("a.txt", "clean\n")
+        self.commit("fix")
+        self.assertEqual(pn.scan_tree(str(self.repo), self.matcher), [])
+
+
 class FilesAndMainTest(RepoCase):
     def test_scan_files_text_and_binary(self):
         self.write("t.txt", "a\nb quuxwidget\n")

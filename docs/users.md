@@ -26,7 +26,7 @@ flowchart BT
     Engine[KismoEngine]
     Fw["Kismo firmware runtime"]
     Pouncer[Pouncer]
-    BikeDyn[BikeDynamics]
+    BikeDyn["Bike dynamics<br/>(private)"]
     PF[PhantomFlow]
   end
 
@@ -65,8 +65,8 @@ Solid arrows are current, pinned use; dashed arrows are planned. Read each arrow
 | [Crucible](https://github.com/CraigHutchinson/Crucible) | Pub, Log, Pipeline, ECS, HexGrid | Its [reuse catalog](https://github.com/CraigHutchinson/Crucible/blob/main/docs/reuse/README.md) and [Sub0 roadmap](https://github.com/CraigHutchinson/Crucible/blob/main/docs/reuse/sub0-roadmap.md) |
 | [Sub0Llm](https://github.com/CraigHutchinson/Sub0Llm) | MemPage, TieredCache | Its storage stack plan |
 | Pouncer ([pouncer.uk](https://pouncer.uk)) | Pub, Log, Pipeline | A KismoTech product |
-| BikeDynamics (KismoTech, private) | Physics | [KismoTech docs](https://github.com/KismoTech/.github/blob/main/docs/repositories.md) |
+| A private bike-dynamics consumer (KismoTech) | Physics | [KismoTech docs](https://github.com/KismoTech/.github/blob/main/docs/repositories.md) |
 | [KismoCore](https://github.com/KismoTech/KismoCore), [KismoEngine](https://github.com/KismoTech/KismoEngine) | Planned | [KismoTech docs](https://github.com/KismoTech/.github/tree/main/docs) |
-| PhantomFlow ([site](https://kismotech.github.io/PhantomFlow.uk/)) | Via the Kismo platform and BikeDynamics (planned) | A KismoTech product |
+| PhantomFlow ([site](https://kismotech.github.io/PhantomFlow.uk/)) | Via the Kismo platform and a private bike-dynamics consumer (planned) | A KismoTech product |
 
 Using a Sub0 library in your project? Open an issue in this repository to be listed.
