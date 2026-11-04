@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Pre-push hook for a PUBLIC repository: refuse a push that names a private repository.
+#
+# Copy to .githooks/pre-push and activate it once per clone:  git config core.hooksPath .githooks
+# The forbidden names live in a local untracked list (see tools/ci/private_names.py and docs/ci-strategy.md,
+# "Public repositories never name private ones"); this file holds none. Without the list the check passes with a note.
+# The script is found in $KISMO_CI_DIR, else in a sibling clone of the .github repository. If neither is there the hook warns
+# and lets the push through (a contributor without the clone is not blocked). `git push --no-verify` skips the hook.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+guard=""
+for dir in "${KISMO_CI_DIR:-}" "$root/../CraigHutchinson.github/tools/ci"; do
+    if [ -n "$dir" ] && [ -f "$dir/private_names.py" ]; then guard="$dir/private_names.py"; break; fi
+done
+if [ -z "$guard" ]; then
+    echo "pre-push: WARNING: private_names.py not found (set KISMO_CI_DIR or clone CraigHutchinson/.github beside this repository); private names NOT checked" >&2
+    exit 0
+fi
+py=python
+command -v python >/dev/null 2>&1 || py=python3
+# Git's stdin (the refs being pushed) goes straight to the guard; an empty push has nothing to scan and passes.
+exec "$py" "$guard" --pre-push --repo "$root"

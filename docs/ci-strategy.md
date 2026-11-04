@@ -197,6 +197,21 @@ The local tools follow it:
 - `templates/pre-push` needs nothing: it does not measure. A hook that calls a gate must let a deferral (exit 0) stand;
   do not turn it into a failure by treating the gate's message as an error.
 
+## Public repositories never name private ones
+
+A public repository must not name or link a private repository, in a comment, a document, a commit message, a path or a built
+artefact. `tools/ci/private_names.py` checks the staged diff (`--staged`), a pushed range (`--pre-push`, from a git hook) or
+whole files (`--files`, for a built `.wasm` or archive) against a list of forbidden names, case-insensitively, and reports the
+file and line. In a range every commit is scanned, not the net change, because a name added and then removed is still in the
+published history.
+
+The list is **local and untracked**, so the forbidden names are never published: put one name per line (`#` comments allowed) in
+`~/.config/kismo/private-names.txt` (`%USERPROFILE%\.config\kismo\private-names.txt` on Windows), or point
+`KISMO_PRIVATE_NAMES_FILE` at a file, or set `git config --global kismo.privateNames "name1;name2"`. Do not copy it into a repository,
+a workflow or a secret. With no list the check passes and says `NOT CHECKED`, so a contributor without the list is not blocked;
+`--require-list` makes that a failure. Wire it into a public repository's pre-push hook as `templates/pre-push-public-names`
+does (a hook that finds the script in a sibling clone of this repository, or at `$KISMO_CI_DIR`).
+
 ## Hygiene for every workflow
 
 - **Pin runner images** (`ubuntu-24.04`, `windows-2022`, `macos-14`), never `-latest`, which migrates silently

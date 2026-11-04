@@ -20,5 +20,6 @@ The reusable workflows in `.github/workflows` and the local attestation tool imp
 | `change-gate.yml` | Decides whether the full tier runs: `CI_MODE`, `ci:skip`, `ci:full`, and the weekly change gate |
 | `tools/ci/local_ci.py` | Runs a repository's `.ci/local.json` checks locally and posts a `local-ci/<level>` commit status (`python -m unittest discover -s tools/ci` runs its tests) |
 | `tools/ci/hook_check.py` | Proves a repository's local pre-push gate works (active, quick on an empty push, no masked exit status, its own `selftest`); `templates/pre-push` is the corrected reference hook |
+| `tools/ci/private_names.py` | Fails a push (or a staged change, or a built file) that names a private repository; the forbidden names come from a local untracked list, never from the repository (see ci-strategy.md) |
 
 Callers pin these workflows by commit SHA of this repository.
