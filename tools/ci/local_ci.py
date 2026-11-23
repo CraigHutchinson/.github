@@ -22,10 +22,21 @@ A STEP is an object:
                 the step is skipped (for slow or opt-in checks, e.g. a reference simulator build)
     ctest       true when the step's commands include a ctest run whose "N tests passed" line should be
                 counted into the status description (default: any command starting with "ctest")
+    timing      true: a wall-clock step (a perf gate, a benchmark). Skipped with the note 'untimed (on battery)' when the
+                power state is battery, a battery saver or throttled (the same logic as the `-LE timing` narrowing); it
+                runs normally on mains and under SUB0MATH_PERF_ON_BATTERY=1
+    perf_outcome  path (placeholders allowed) of a sub0perf outcome JSON the step writes (schema sub0perf-outcome-1:
+                status, exit, counts, changed[], report, next_action); read after the step and folded into the status
+                description, e.g. 'perf regressed (regressed 1, ok 12)'; --brief prints its report path and next_action
     commands    list of commands; each is an argv list or a string (split with shlex). Placeholders:
                 {builddir} build-local-<level>-<step name>   {cc} {cxx} compiler executables
                 {python} this interpreter   {jobs} CPU count   {repo} repository root
                 {ci_dir} the directory holding local_ci.py and its sibling tools (hook_check.py)
+                {sub0math_tooling} the Sub0Math tooling directory, read from <builddir>/sub0math_tooling_dir.txt
+                (written at configure time; read when the command runs, so an earlier command of the step may create it)
+
+`--brief` prints one verdict line and then only the failing steps (and a perf step's report and next action), to save tokens;
+the full per-step table is still printed without it.
 
 On success a commit status `local-ci/<level>` is posted with `gh api repos/{owner}/{repo}/statuses/{sha}`, but
 only when the commit exists on the remote and the working tree is clean. Otherwise it says how to post after
@@ -78,6 +89,8 @@ class Step:
     env: dict = field(default_factory=dict)
     ctest: Optional[bool] = None
     requires_env: Optional[str] = None
+    timing: bool = False
+    perf_outcome: Optional[str] = None
 
 
 def load_config(repo: Path) -> dict:
@@ -105,7 +118,8 @@ def steps_for(config: dict, level: str) -> list[Step]:
         if raw.get("compiler") not in (None, "gcc", "clang", "msvc"):
             raise CiError(f"step '{raw['name']}': unknown compiler '{raw.get('compiler')}'")
         steps.append(Step(raw["name"], raw["commands"], raw.get("compiler"), bool(raw.get("optional", False)),
-                          dict(raw.get("env", {})), raw.get("ctest"), raw.get("requires_env")))
+                          dict(raw.get("env", {})), raw.get("ctest"), raw.get("requires_env"),
+                          bool(raw.get("timing", False)), raw.get("perf_outcome")))
     if not steps:
         raise CiError(f"level '{level}' declares no steps")
     return steps
@@ -198,6 +212,44 @@ class StepResult:
     ctest: Optional[tuple] = None
     seconds: float = 0.0
     note: str = ""
+    perf: Optional[dict] = None  # a folded sub0perf outcome (see read_perf_outcome)
+
+
+TOOLING_FILE = "sub0math_tooling_dir.txt"
+PERF_SCHEMA = "sub0perf-outcome-1"
+QUIET_PERF = ("ok", "pass", "passed", "deferred")  # outcomes --brief does not expand
+
+
+def read_tooling_dir(builddir: Path) -> str:
+    """The Sub0Math tooling directory a configure step recorded in <builddir>/sub0math_tooling_dir.txt."""
+    path = builddir / TOOLING_FILE
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError as e:
+        raise CiError(f"{{sub0math_tooling}}: cannot read {path} (configure the build first): {e.strerror or e}") from e
+    if not text:
+        raise CiError(f"{{sub0math_tooling}}: {path} is empty")
+    return text
+
+
+def read_perf_outcome(path: Path) -> Optional[dict]:
+    """A sub0perf outcome (schema sub0perf-outcome-1) reduced to what the status needs; None if absent or not that schema."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("schema", PERF_SCHEMA) != PERF_SCHEMA or "status" not in data:
+        return None
+    counts = data.get("counts") if isinstance(data.get("counts"), dict) else {}
+    changed = data.get("changed") if isinstance(data.get("changed"), list) else []
+    return {"status": str(data["status"]), "exit": data.get("exit"), "counts": counts, "changed": changed,
+            "report": data.get("report") or "", "next_action": data.get("next_action") or ""}
+
+
+def perf_text(perf: dict) -> str:
+    """Compact status text: 'perf regressed (regressed 1, ok 12)'."""
+    counts = ", ".join(f"{k} {v}" for k, v in perf["counts"].items() if v)
+    return f"perf {perf['status']}" + (f" ({counts})" if counts else "")
 
 
 TIMING_LABEL = "timing"  # the ctest label of wall-clock tests (docs/ci-strategy.md, "Power state")
@@ -244,6 +296,8 @@ def run_step(step: Step, level: str, repo: Path, compilers: dict, dry_run: bool 
     comp = None
     if step.requires_env and not os.environ.get(step.requires_env):
         return StepResult(step.name, "skipped", note=f"set {step.requires_env} to run")
+    if step.timing and untimed:
+        return StepResult(step.name, "skipped", note=ci_power.UNTIMED_LABEL)
     if step.compiler:
         comp = compilers.get(step.compiler)
         if comp is None:
@@ -263,6 +317,15 @@ def run_step(step: Step, level: str, repo: Path, compilers: dict, dry_run: bool 
     print(f"== {step.name}" + (f" [{comp.version}]" if comp else ""), flush=True)
     for command in step.commands:
         argv = expand(command, values)
+        if any("{sub0math_tooling}" in a for a in argv):
+            try:
+                tooling = read_tooling_dir(repo / values["builddir"])
+            except CiError as e:
+                if not dry_run:
+                    result.status, result.note = "failed", str(e)
+                    break
+                tooling = "<sub0math_tooling>"
+            argv = [a.replace("{sub0math_tooling}", tooling) for a in argv]
         if untimed:
             narrowed = exclude_timing(argv)
             if narrowed:
@@ -284,6 +347,11 @@ def run_step(step: Step, level: str, repo: Path, compilers: dict, dry_run: bool 
             result.note = f"exit {code}: {' '.join(argv[:3])}"
             break
     result.seconds = time.monotonic() - started
+    if step.perf_outcome and not dry_run:
+        outcome = expand([step.perf_outcome], values)[0]
+        result.perf = read_perf_outcome(repo / outcome)
+        if result.perf is None and result.status == "passed":
+            result.note = " ".join(x for x in (result.note, f"no sub0perf outcome at {outcome}") if x)
     if counted:
         result.ctest = (totals[0], totals[1])
     return result
@@ -316,8 +384,33 @@ def summarise(results: list[StepResult]) -> str:
     lines = []
     for r in results:
         detail = f"ctest {r.ctest[0]}/{r.ctest[1]}" if r.ctest else ""
-        extra = " ".join(x for x in (r.compiler, detail, r.note) if x)
+        extra = " ".join(x for x in (r.compiler, detail, perf_text(r.perf) if r.perf else "", r.note) if x)
         lines.append(f"  {r.status.upper():8} {r.name:30} {extra} ({r.seconds:.0f}s)")
+    return "\n".join(lines)
+
+
+def summarise_brief(level: str, sha: str, results: list[StepResult], mark: str = "") -> str:
+    """One verdict line, then only what needs attention: failed steps, and a perf step's report path and next action."""
+    ok = overall_ok(results)
+    passed = sum(r.status == "passed" for r in results)
+    skipped = sum(r.status == "skipped" for r in results)
+    failed = [r for r in results if r.status == "failed"]
+    head = (f"local-ci/{level} {sha[:12]}: {'OK' if ok else 'FAILED'} {passed} passed"
+            + (f", {len(failed)} failed" if failed else "") + (f", {skipped} skipped" if skipped else "")
+            + (f" [{mark}]" if mark else ""))
+    lines = [head]
+    for r in results:
+        if r.status == "failed":
+            lines.append(f"  FAILED {r.name}: {r.note or 'see the full output'}")
+        if r.perf and (r.status == "failed" or r.perf["status"] not in QUIET_PERF):
+            lines.append(f"  {r.name}: {perf_text(r.perf)}")
+            if r.perf["changed"]:
+                lines.append(f"    changed: {', '.join(str(c) for c in r.perf['changed'][:5])}"
+                             + (" ..." if len(r.perf["changed"]) > 5 else ""))
+            if r.perf["report"]:
+                lines.append(f"    report: {r.perf['report']}")
+            if r.perf["next_action"]:
+                lines.append(f"    next: {r.perf['next_action']}")
     return "\n".join(lines)
 
 
@@ -335,7 +428,8 @@ def describe(level: str, results: list[StepResult], mark: str = "") -> str:
         if r.status != "passed":
             continue
         label = f"{r.compiler} {r.name}".strip() if r.compiler else r.name
-        parts.append(f"{label}: ctest {level} {r.ctest[0]}/{r.ctest[1]}" if r.ctest else f"{label}: ok")
+        text = f"ctest {level} {r.ctest[0]}/{r.ctest[1]}" if r.ctest else "ok"
+        parts.append(f"{label}: {text}" + (f"; {perf_text(r.perf)}" if r.perf else ""))
     text = "; ".join(parts) or "no steps"
     tail = f"; {mark}" if mark else ""
     room = DESCRIPTION_LIMIT - len(tail)
@@ -431,6 +525,8 @@ def main(argv: Optional[list] = None) -> int:
                     help="do not run; post the status for the last successful run of this level")
     ap.add_argument("--dry-run", action="store_true", help="print the commands without running them")
     ap.add_argument("--allow-dirty", action="store_true", help="post even with uncommitted changes")
+    ap.add_argument("--brief", action="store_true",
+                    help="print one verdict line and only the failing steps (and a perf step's report and next action)")
     ap.add_argument("--list", action="store_true", help="list the steps of the level and exit")
     args = ap.parse_args(argv)
 
@@ -465,8 +561,11 @@ def main(argv: Optional[list] = None) -> int:
 
     if args.dry_run:
         return 0
-    print(f"\nlocal-ci/{args.level} at {sha[:12]}" + (f" [{mark}]" if mark else "") + f":\n{summarise(results)}")
     ok = overall_ok(results)
+    if args.brief:
+        print("\n" + summarise_brief(args.level, sha, results, mark))
+    else:
+        print(f"\nlocal-ci/{args.level} at {sha[:12]}" + (f" [{mark}]" if mark else "") + f":\n{summarise(results)}")
     description = describe(args.level, results, mark)
     save_last_run(repo, args.level, sha, results, description, {**state.as_dict(), "mark": mark} if mark else None)
     if not ok:

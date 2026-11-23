@@ -240,5 +240,146 @@ class PowerTests(unittest.TestCase):
             self.assertEqual(lc.load_last_run(Path(d), "quick")["power"]["mark"], "untimed (on battery)")
 
 
+class TimingStepTests(unittest.TestCase):
+    CFG = {"levels": {"full": {"steps": [
+        {"name": "py", "commands": [["x"]]},
+        {"name": "perf", "timing": True, "commands": [["bench"]]}]}}}
+
+    def run_full(self, untimed):
+        calls = []
+
+        def run(argv, cwd, env):
+            calls.append(argv)
+            return 0, ""
+        return lc.run_level(self.CFG, "full", Path("."), detect=fake_detect({}), runner=run, untimed=untimed), calls
+
+    def test_timing_step_skipped_when_untimed(self):
+        results, calls = self.run_full(True)
+        self.assertEqual([r.status for r in results], ["passed", "skipped"])
+        self.assertEqual(results[1].note, "untimed (on battery)")
+        self.assertEqual(calls, [["x"]])
+        self.assertTrue(lc.overall_ok(results))
+
+    def test_timing_step_runs_on_mains(self):
+        results, calls = self.run_full(False)
+        self.assertEqual([r.status for r in results], ["passed", "passed"])
+        self.assertEqual(calls, [["x"], ["bench"]])
+
+    def test_field_is_parsed(self):
+        steps = lc.steps_for(self.CFG, "full")
+        self.assertEqual([s.timing for s in steps], [False, True])
+
+
+class ToolingPlaceholderTests(unittest.TestCase):
+    def test_read_from_the_build_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d)
+            b = repo / "build-local-quick-s"
+            b.mkdir()
+            (b / "sub0math_tooling_dir.txt").write_text("/deps/Sub0Math/tools/perf\n")
+            step = lc.Step("s", [["{python}", "{sub0math_tooling}/bench_check.py", "gate"]])
+            seen = []
+            r = lc.run_step(step, "quick", repo, {}, runner=lambda argv, cwd, env: seen.append(argv) or (0, ""))
+            self.assertEqual(r.status, "passed")
+            self.assertEqual(seen[0][1], "/deps/Sub0Math/tools/perf/bench_check.py")
+
+    def test_missing_file_fails_the_step_with_a_hint(self):
+        with tempfile.TemporaryDirectory() as d:
+            step = lc.Step("s", [["{sub0math_tooling}/x.py"]])
+            seen = []
+            r = lc.run_step(step, "quick", Path(d), {}, runner=lambda *a: seen.append(a) or (0, ""))
+            self.assertEqual(r.status, "failed")
+            self.assertIn("configure the build first", r.note)
+            self.assertEqual(seen, [])
+
+    def test_created_by_an_earlier_command_of_the_same_step(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d)
+            step = lc.Step("s", [["configure"], ["{sub0math_tooling}/x.py"]])
+            seen = []
+
+            def run(argv, cwd, env):
+                seen.append(argv)
+                if argv == ["configure"]:
+                    (repo / "build-local-quick-s").mkdir()
+                    (repo / "build-local-quick-s" / "sub0math_tooling_dir.txt").write_text("T")
+                return 0, ""
+            self.assertEqual(lc.run_step(step, "quick", repo, {}, runner=run).status, "passed")
+            self.assertEqual(seen[1], ["T/x.py"])
+
+    def test_dry_run_does_not_need_the_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            step = lc.Step("s", [["{sub0math_tooling}/x.py"]])
+            self.assertEqual(lc.run_step(step, "quick", Path(d), {}, dry_run=True).status, "passed")
+
+
+class PerfOutcomeTests(unittest.TestCase):
+    OUTCOME = {"schema": "sub0perf-outcome-1", "status": "regressed", "exit": 1,
+               "counts": {"regressed": 1, "ok": 12, "improved": 0}, "changed": ["bench_a"],
+               "report": "build/perf/report.md", "next_action": "run bench_check.py improve bench_a"}
+
+    def write(self, d, data):
+        p = Path(d) / "outcome.json"
+        p.write_text(json.dumps(data))
+        return p
+
+    def test_read(self):
+        with tempfile.TemporaryDirectory() as d:
+            perf = lc.read_perf_outcome(self.write(d, self.OUTCOME))
+            self.assertEqual(perf["status"], "regressed")
+            self.assertEqual(perf["changed"], ["bench_a"])
+            self.assertEqual(lc.perf_text(perf), "perf regressed (regressed 1, ok 12)")
+
+    def test_absent_or_foreign_schema_is_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(lc.read_perf_outcome(Path(d) / "nope.json"))
+            self.assertIsNone(lc.read_perf_outcome(self.write(d, {"schema": "other-1", "status": "x"})))
+            (Path(d) / "bad.json").write_text("{")
+            self.assertIsNone(lc.read_perf_outcome(Path(d) / "bad.json"))
+
+    def test_step_folds_the_outcome_into_the_description(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.write(d, {**self.OUTCOME, "status": "ok", "counts": {"ok": 13}})
+            step = lc.Step("perf", [["bench"]], perf_outcome="outcome.json")
+            r = lc.run_step(step, "full", Path(d), {}, runner=lambda *a: (0, ""))
+            self.assertEqual(r.perf["status"], "ok")
+            self.assertEqual(lc.describe("full", [r]), "perf: ok; perf ok (ok 13)")
+
+    def test_missing_outcome_is_noted_not_failed(self):
+        with tempfile.TemporaryDirectory() as d:
+            step = lc.Step("perf", [["bench"]], perf_outcome="outcome.json")
+            r = lc.run_step(step, "full", Path(d), {}, runner=lambda *a: (0, ""))
+            self.assertEqual(r.status, "passed")
+            self.assertIn("no sub0perf outcome", r.note)
+
+
+class BriefTests(unittest.TestCase):
+    def test_all_green_is_one_line(self):
+        rs = [lc.StepResult("gcc", "passed", "GCC 16", (3, 3)), lc.StepResult("clang", "skipped")]
+        out = lc.summarise_brief("quick", "abcdef1234567890", rs)
+        self.assertEqual(out, "local-ci/quick abcdef123456: OK 1 passed, 1 skipped")
+
+    def test_failures_and_mark(self):
+        rs = [lc.StepResult("gcc", "failed", note="exit 1: ctest --preset quick"), lc.StepResult("py", "passed")]
+        out = lc.summarise_brief("quick", "abcdef1234567890", rs, "untimed (on battery)").splitlines()
+        self.assertEqual(out[0], "local-ci/quick abcdef123456: FAILED 1 passed, 1 failed [untimed (on battery)]")
+        self.assertEqual(out[1], "  FAILED gcc: exit 1: ctest --preset quick")
+        self.assertEqual(len(out), 2)
+
+    def test_perf_outcome_shows_report_and_next_action(self):
+        rs = [lc.StepResult("perf", "failed", note="exit 1: bench", perf={
+            "status": "regressed", "exit": 1, "counts": {"regressed": 1}, "changed": ["a"],
+            "report": "r.md", "next_action": "improve a"})]
+        out = lc.summarise_brief("full", "abcdef1234567890", rs)
+        self.assertIn("report: r.md", out)
+        self.assertIn("next: improve a", out)
+        self.assertIn("changed: a", out)
+
+    def test_quiet_perf_is_not_expanded(self):
+        rs = [lc.StepResult("perf", "passed", perf={
+            "status": "ok", "exit": 0, "counts": {}, "changed": [], "report": "r.md", "next_action": ""})]
+        self.assertEqual(len(lc.summarise_brief("full", "a" * 12, rs).splitlines()), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
