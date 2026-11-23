@@ -20,8 +20,10 @@ zero=0000000000000000000000000000000000000000
 # git writes "<local ref> <local sha> <remote ref> <remote sha>" per ref on stdin; nothing at all when up to date.
 pushed=0
 code=0
+refs=''                                                    # the ref lines, kept for the optional perf gate below
 while read -r local_ref local_sha remote_ref remote_sha || [ -n "${local_sha:-}" ]; do
     remote_sha="${remote_sha%$'\r'}"                       # tolerate CRLF on stdin (Windows shells)
+    refs+="$local_ref $local_sha $remote_ref $remote_sha"$'\n'
     [ "$local_sha" = "$zero" ] && continue                # a deletion sends nothing
     pushed=$((pushed + 1))
     if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
@@ -57,4 +59,17 @@ if ! "${tests[@]}"; then
     echo "pre-push: TESTS FAILED - push aborted." >&2
     exit 1
 fi
+
+# --- Optional: the local performance gate (docs/ci-strategy.md, "Performance across tiers") -----------------------------
+# Uncomment for a repository that uses the Sub0Math perf tooling. Timing is local only; there is no timing in hosted CI.
+# The configure step records the tooling directory in build/sub0math_tooling_dir.txt. The gate reads the pushed refs on stdin
+# (here from "$refs"), prints one brief line (SUB0PERF_OUTPUT=brief; details are in the report path it names) and decides
+# itself what to skip. A deferral (battery, battery saver, throttled machine) exits 0 and STANDS: never turn the gate's
+# message into a failure, and never set SUB0MATH_PERF_ON_BATTERY here.
+# tooling="$(cat build/sub0math_tooling_dir.txt)"
+# if ! SUB0PERF_OUTPUT=brief python "$tooling/bench_check.py" gate --refs-from-stdin <<<"$refs"; then
+#     echo "pre-push: PERFORMANCE GATE FAILED - push aborted." >&2
+#     exit 1
+# fi
+
 echo "pre-push: all checks passed."

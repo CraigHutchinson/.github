@@ -277,6 +277,52 @@ class TemplateTests(RepoCase):
         result = self.push(f"refs/heads/new {self.sha()} refs/heads/new {'0' * 40}\n")
         self.assertNotEqual(result.returncode, 0)
 
+    def stanza_hook(self, gate_exit):
+        """The template with the perf stanza uncommented, `build`/`tests` replaced by `true`, and a fake gate that echoes its stdin."""
+        text = self.TEMPLATE.read_text(encoding="utf-8")
+        start = text.index("# tooling=")
+        end = text.index('echo "pre-push: all checks passed."')
+        stanza = "\n".join(line[2:] if line.startswith("# ") else line for line in text[start:end].splitlines()) + "\n"
+        text = text[:start] + stanza + text[end:]
+        text = text.replace("build=(cmake --build build --config Release -j4)", "build=(true)")
+        text = text.replace("tests=(ctest --test-dir build --output-on-failure)", "tests=(true)")
+        tooling = Path(self.tmp.name) / "tooling"
+        tooling.mkdir(exist_ok=True)
+        (tooling / "bench_check.py").write_text(
+            "import os, sys\nprint('GATE output=' + os.environ.get('SUB0PERF_OUTPUT', '') + ' args=' + ' '.join(sys.argv[1:]))\n"
+            "print('STDIN ' + sys.stdin.read().strip())\n" f"sys.exit({gate_exit})\n", encoding="utf-8")
+        (self.repo / "build").mkdir(exist_ok=True)
+        (self.repo / "build" / "sub0math_tooling_dir.txt").write_text(tooling.as_posix())
+        self.hook = self.write_hook(text)
+        return text
+
+    def test_the_perf_stanza_is_commented_out_by_default(self):
+        self.commit("b.cpp", "int f() { return 1; }\n")
+        text = self.TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("bench_check.py", text)
+        self.assertTrue(all(line.startswith("#") for line in text.splitlines() if "bench_check.py" in line))
+
+    def test_the_uncommented_stanza_gets_the_refs_and_brief_output(self):
+        text = self.stanza_hook(0)
+        self.assertEqual(hc.lint_status_masking(text), [])
+        self.commit("b.cpp", "int f() { return 1; }\n")
+        refs = f"refs/heads/main {self.sha()} refs/heads/main {self.base}"
+        result = self.push(refs + "\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("GATE output=brief args=gate --refs-from-stdin", result.stdout)
+        self.assertIn("STDIN " + refs, result.stdout)
+
+    def test_a_failing_gate_blocks_the_push(self):
+        self.stanza_hook(1)
+        self.commit("b.cpp", "int f() { return 1; }\n")
+        result = self.push(f"refs/heads/main {self.sha()} refs/heads/main {self.base}\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PERFORMANCE GATE FAILED", result.stdout + result.stderr)
+
+    def test_the_gate_does_not_run_when_there_is_nothing_to_check(self):
+        self.stanza_hook(1)
+        self.assertEqual(self.push("").returncode, 0)
+
 
 # A stand-in for the shared perf gate's `bench_check.py power`: the power state is faked through the environment, as the
 # real one does (SUB0PERF_FAKE_POWER), so no test depends on the machine's actual power state.
