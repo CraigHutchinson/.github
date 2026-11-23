@@ -330,6 +330,15 @@ class PerfOutcomeTests(unittest.TestCase):
             self.assertEqual(perf["changed"], ["bench_a"])
             self.assertEqual(lc.perf_text(perf), "perf regressed (regressed 1, ok 12)")
 
+    def test_a_no_verdict_outcome_from_a_deferred_gate_is_read(self):
+        """What `bench_check.py ... --out-json` writes when no verdict was reached (a deferral): no counts, the command's exit."""
+        no_verdict = {"schema": "sub0perf-outcome-1", "command": "gate", "status": "NO_VERDICT", "exit": 0, "counts": None,
+                      "changed": [], "report": None, "next_action": ""}
+        with tempfile.TemporaryDirectory() as d:
+            perf = lc.read_perf_outcome(self.write(d, no_verdict))
+            self.assertEqual((perf["status"], perf["exit"], perf["counts"], perf["report"]), ("NO_VERDICT", 0, {}, ""))
+            self.assertEqual(lc.perf_text(perf), "perf NO_VERDICT")
+
     def test_absent_or_foreign_schema_is_none(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertIsNone(lc.read_perf_outcome(Path(d) / "nope.json"))
