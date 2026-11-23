@@ -1,7 +1,7 @@
 name: C++ full (reusable)
 
 # The release-complete CI tier (docs/ci-strategy.md): Linux GCC and Clang, an optional FMA leg, Windows MSVC,
-# optional macOS, optional ASan+UBSan, all running `ctest --preset full`. Repository-specific extras
+# optional macOS, optional ASan+UBSan (Windows: MSVC by default, or MinGW-w64 UCRT with windows-toolchain: mingw-ucrt), all running `ctest --preset full`. Repository-specific extras
 # (reference simulators, provenance, golden regeneration, python tests) are jobs in the caller's own workflow
 # next to this one; the caller decides whether they gate. Performance is deliberately not here: the local
 # gate owns it.
@@ -52,6 +52,14 @@ on:
         description: windows-2022 MSVC leg
         type: boolean
         default: true
+      windows-toolchain:
+        description: 'Windows toolchain: msvc (windows-2022, default) or mingw-ucrt (MSYS2 UCRT64 gcc, ninja, ccache; for libraries built with GCC-style flags)'
+        type: string
+        default: msvc
+      test-args:
+        description: 'Extra ctest arguments for every leg, e.g. --timeout 600'
+        type: string
+        default: ""
       macos:
         description: macos-14 leg (billed at 10x on private repositories)
         type: boolean
@@ -106,6 +114,9 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
       CCACHE_MAXSIZE: 500M
+      # As env, not only -D flags: nested builds (ctest --build-and-test consumer projects) are cached too.
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -143,7 +154,11 @@ jobs:
           cmake --preset "$PRESET" -G Ninja -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache $EXTRA
       - run: cmake --build --preset "${{ inputs.build-preset }}"
       - name: Test (full tier)
-        run: ctest --preset "${{ inputs.test-preset }}"
+        env:
+          TEST_ARGS: ${{ inputs.test-args }}
+        run: |
+          # shellcheck disable=SC2086
+          ctest --preset "${{ inputs.test-preset }}" $TEST_ARGS
 
   linux-fma:
     # FMA hardware: results must match the baseline legs. Proves the determinism helpers hold when the
@@ -158,6 +173,9 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
       CCACHE_MAXSIZE: 500M
+      # As env, not only -D flags: nested builds (ctest --build-and-test consumer projects) are cached too.
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -200,11 +218,15 @@ jobs:
             -DCMAKE_CXX_FLAGS=-march=x86-64-v3 $EXTRA
       - run: cmake --build --preset "${{ inputs.build-preset }}"
       - name: Test (full tier)
-        run: ctest --preset "${{ inputs.test-preset }}"
+        env:
+          TEST_ARGS: ${{ inputs.test-args }}
+        run: |
+          # shellcheck disable=SC2086
+          ctest --preset "${{ inputs.test-preset }}" $TEST_ARGS
 
   windows:
     if: >-
-      ${{ inputs.windows && vars.CI_MODE != 'off'
+      ${{ inputs.windows && inputs.windows-toolchain == 'msvc' && vars.CI_MODE != 'off'
       && (vars.CI_MODE != 'smoke' || startsWith(github.ref, 'refs/tags/v'))
       && !contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
     name: windows (MSVC)
@@ -236,7 +258,74 @@ jobs:
           cmake --preset "$PRESET" $EXTRA
       - run: cmake --build --preset "${{ inputs.build-preset }}"
       - name: Test (full tier)
-        run: ctest --preset "${{ inputs.test-preset }}"
+        env:
+          TEST_ARGS: ${{ inputs.test-args }}
+        run: |
+          # shellcheck disable=SC2086
+          ctest --preset "${{ inputs.test-preset }}" $TEST_ARGS
+
+  windows-mingw:
+    # windows-toolchain: mingw-ucrt. MinGW-w64 UCRT from MSYS2; path-type inherit keeps the runner's git and node on PATH.
+    if: >-
+      ${{ inputs.windows && inputs.windows-toolchain == 'mingw-ucrt' && vars.CI_MODE != 'off'
+      && (vars.CI_MODE != 'smoke' || startsWith(github.ref, 'refs/tags/v'))
+      && !contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
+    name: windows (MinGW-w64 UCRT)
+    runs-on: windows-2022
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+      CCACHE_MAXSIZE: 500M
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          path-type: inherit
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-ccache
+      - name: Key the dependency cache on the pins
+        id: keys
+        shell: bash
+        env:
+          KEY_FILES: ${{ inputs.cpm-cache-key-files }}
+        run: |
+          # shellcheck disable=SC2086
+          echo "cpm=$(cat $KEY_FILES 2>/dev/null | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .cache/cpm
+          key: cpm-mingw-${{ steps.keys.outputs.cpm }}
+          restore-keys: cpm-mingw-
+      - uses: actions/cache@v4
+        with:
+          path: .cache/ccache
+          key: ccache-full-mingw-${{ steps.keys.outputs.cpm }}-${{ github.sha }}
+          restore-keys: ccache-full-mingw-${{ steps.keys.outputs.cpm }}-
+      - name: Configure
+        env:
+          PRESET: ${{ inputs.configure-preset }}
+          EXTRA: ${{ inputs.extra-cmake-args }}
+        run: |
+          # shellcheck disable=SC2086
+          cmake --preset "$PRESET" -G Ninja -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc $EXTRA
+      - run: cmake --build --preset "${{ inputs.build-preset }}"
+      - name: Test (full tier)
+        env:
+          TEST_ARGS: ${{ inputs.test-args }}
+        run: |
+          # shellcheck disable=SC2086
+          ctest --preset "${{ inputs.test-preset }}" $TEST_ARGS
+      - run: ccache --show-stats || true
 
   macos:
     if: >-
@@ -269,7 +358,11 @@ jobs:
           cmake --preset "$PRESET" $EXTRA
       - run: cmake --build --preset "${{ inputs.build-preset }}"
       - name: Test (full tier)
-        run: ctest --preset "${{ inputs.test-preset }}"
+        env:
+          TEST_ARGS: ${{ inputs.test-args }}
+        run: |
+          # shellcheck disable=SC2086
+          ctest --preset "${{ inputs.test-preset }}" $TEST_ARGS
 
   sanitizers:
     if: >-
@@ -282,6 +375,9 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
       CCACHE_MAXSIZE: 500M
+      # As env, not only -D flags: nested builds (ctest --build-and-test consumer projects) are cached too.
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -316,4 +412,8 @@ jobs:
         run: cmake --preset "$PRESET" -G Ninja -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - run: cmake --build --preset "${{ inputs.sanitizer-build-preset }}"
       - name: Test (sanitized)
-        run: ctest --preset "${{ inputs.sanitizer-test-preset }}"
+        env:
+          TEST_ARGS: ${{ inputs.test-args }}
+        run: |
+          # shellcheck disable=SC2086
+          ctest --preset "${{ inputs.sanitizer-test-preset }}" $TEST_ARGS

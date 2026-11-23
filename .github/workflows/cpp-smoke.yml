@@ -53,6 +53,10 @@ on:
         description: Space-separated files whose content keys the CPM source cache (dependency pins)
         type: string
         default: cmake/Dependencies.cmake CMakeLists.txt
+      test-args:
+        description: 'Extra ctest arguments, e.g. --timeout 600'
+        type: string
+        default: ""
       timeout-minutes:
         type: number
         default: 25
@@ -83,6 +87,9 @@ jobs:
       CPM_SOURCE_CACHE: ${{ github.workspace }}/.cache/cpm
       CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
       CCACHE_MAXSIZE: 500M
+      # As env, not only -D flags: nested builds (ctest --build-and-test consumer projects) are cached too.
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -123,7 +130,11 @@ jobs:
       - name: Build
         run: cmake --build --preset "${{ inputs.build-preset }}"
       - name: Test (quick tier)
-        run: ctest --preset "${{ inputs.test-preset }}"
+        env:
+          TEST_ARGS: ${{ inputs.test-args }}
+        run: |
+          # shellcheck disable=SC2086
+          ctest --preset "${{ inputs.test-preset }}" $TEST_ARGS
       - name: Summary
         run: |
           {
