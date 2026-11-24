@@ -3,8 +3,9 @@
 See docs/ci-strategy.md, "Power state". States: `ac`, `battery`, `unknown` (a desktop, a runner or a failed query counts as
 `ac` for every decision but is reported as unknown), plus whether a battery saver is on.
 
-Duplication note: Sub0Math's shared perf gate has the same module (tools/perf/sub0perf/power.py). When the repository
-being checked carries it, `power_state(repo)` uses it, so the two cannot disagree. Otherwise the self-contained fallback
+Duplication note: Sub0Perf's shared perf gate has the same module (tools/perf/sub0perf/power.py). When the repository
+being checked carries it (in-tree, or through the tooling directory its configure step recorded in
+<builddir>/sub0math_tooling_dir.txt, where Sub0Perf lives after a CPM download), `power_state(repo)` uses it, so the two cannot disagree. Otherwise the self-contained fallback
 below answers, with the same states and the same environment variables:
 
     SUB0PERF_FAKE_POWER=ac|battery|unknown|saver   replaces the query; for tests only (`saver` is mains with the saver on)
@@ -137,21 +138,41 @@ def fake(value: str) -> PowerState:
     return PowerState(value if value in (AC, BATTERY, UNKNOWN) else UNKNOWN, False, "fake")
 
 
+def _tooling_candidates(repo: Path) -> list[Path]:
+    """Directories that may hold the sub0perf package: the repository's own tools/perf, then the recorded tooling directories
+    (`<builddir>/sub0math_tooling_dir.txt` under build*/ and build/*/, newest first)."""
+    found = [repo / "tools" / "perf"]
+    records = sorted([*repo.glob("build*/sub0math_tooling_dir.txt"), *repo.glob("build/*/sub0math_tooling_dir.txt")],
+                     key=lambda p: p.stat().st_mtime, reverse=True)
+    for record in records:
+        try:
+            text = record.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if text:
+            found.append(Path(text))
+    return found
+
+
 def _shared_module(repo: Optional[Path]):
-    """Sub0Math's sub0perf.power, when the repository carries it (tools/perf/sub0perf); else None."""
-    if repo is None or not (repo / "tools" / "perf" / "sub0perf" / "power.py").is_file():
+    """Sub0Perf's sub0perf.power, when the repository carries it or its configure step recorded where it is; else None."""
+    if repo is None:
         return None
-    path = str(repo / "tools" / "perf")
-    added = path not in sys.path
-    if added:
-        sys.path.insert(0, path)
-    try:
-        return importlib.import_module("sub0perf.power")
-    except Exception:  # a broken or older copy: use the fallback  # noqa: BLE001
-        return None
-    finally:
-        if added and path in sys.path:
-            sys.path.remove(path)
+    for tooling in _tooling_candidates(repo):
+        if not (tooling / "sub0perf" / "power.py").is_file():
+            continue
+        path = str(tooling)
+        added = path not in sys.path
+        if added:
+            sys.path.insert(0, path)
+        try:
+            return importlib.import_module("sub0perf.power")
+        except Exception:  # a broken or older copy: try the next, then the fallback  # noqa: BLE001
+            continue
+        finally:
+            if added and path in sys.path:
+                sys.path.remove(path)
+    return None
 
 
 def power_state(repo: Optional[Path] = None, environ: Optional[dict] = None) -> PowerState:

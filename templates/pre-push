@@ -61,7 +61,7 @@ if ! "${tests[@]}"; then
 fi
 
 # --- Optional: the local performance gate (docs/ci-strategy.md, "Performance across tiers") -----------------------------
-# Uncomment for a repository that uses the Sub0Math perf tooling. Timing is local only; there is no timing in hosted CI.
+# Uncomment for a repository that uses the Sub0Perf tooling. Timing is local only; there is no timing in hosted CI.
 # This is THE wiring for a committed hooks directory (core.hooksPath .githooks): the hook reads the pushed refs itself (above) and
 # runs the gate with them. Do not also add the chain line `install-hooks` prints for a tracked directory: that line runs a copy
 # that reads all of stdin first, and the loop above would then see no refs. (The chain line is for a committed hook that does not
