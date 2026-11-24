@@ -194,6 +194,10 @@ class PowerTests(unittest.TestCase):
     def test_switches_set(self):
         self.assertEqual(lc.ci_power.switches_set({}), [])
         self.assertEqual(lc.ci_power.switches_set({"SUB0MATH_PERF_ON_BATTERY": "1"}), ["SUB0MATH_PERF_ON_BATTERY=1"])
+        self.assertEqual(lc.ci_power.switches_set({"SUB0PERF_ON_BATTERY": "1"}), ["SUB0PERF_ON_BATTERY=1"])
+        self.assertTrue(lc.ci_power.override({"SUB0PERF_ON_BATTERY": "1"}))
+        self.assertTrue(lc.ci_power.override({"SUB0MATH_PERF_ON_BATTERY": "1"}))
+        self.assertFalse(lc.ci_power.override({}))
 
     def test_exclude_timing(self):
         self.assertEqual(lc.exclude_timing(["ctest", "--test-dir", "b"]), ["ctest", "--test-dir", "b", "-LE", "timing"])
@@ -282,6 +286,31 @@ class ToolingPlaceholderTests(unittest.TestCase):
             r = lc.run_step(step, "quick", repo, {}, runner=lambda argv, cwd, env: seen.append(argv) or (0, ""))
             self.assertEqual(r.status, "passed")
             self.assertEqual(seen[0][1], "/deps/Sub0Math/tools/perf/bench_check.py")
+
+    def test_the_new_placeholder_and_record_name_work(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d)
+            b = repo / "build-local-quick-s"
+            b.mkdir()
+            (b / "sub0perf_tooling_dir.txt").write_text("/deps/Sub0Perf/tools/perf\n")
+            step = lc.Step("s", [["{python}", "{sub0perf_tooling}/bench_check.py", "gate"]])
+            seen = []
+            r = lc.run_step(step, "quick", repo, {}, runner=lambda argv, cwd, env: seen.append(argv) or (0, ""))
+            self.assertEqual(r.status, "passed")
+            self.assertEqual(seen[0][1], "/deps/Sub0Perf/tools/perf/bench_check.py")
+
+    def test_the_old_placeholder_reads_the_new_record_and_the_new_one_reads_the_old_record(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d)
+            b = repo / "build-local-quick-s"
+            b.mkdir()
+            (b / "sub0perf_tooling_dir.txt").write_text("T\n")
+            seen = []
+            lc.run_step(lc.Step("s", [["{sub0math_tooling}/x.py"]]), "quick", repo, {}, runner=lambda argv, cwd, env: seen.append(argv) or (0, ""))
+            (b / "sub0perf_tooling_dir.txt").unlink()
+            (b / "sub0math_tooling_dir.txt").write_text("U\n")
+            lc.run_step(lc.Step("s", [["{sub0perf_tooling}/x.py"]]), "quick", repo, {}, runner=lambda argv, cwd, env: seen.append(argv) or (0, ""))
+            self.assertEqual([a[0] for a in seen], ["T/x.py", "U/x.py"])
 
     def test_missing_file_fails_the_step_with_a_hint(self):
         with tempfile.TemporaryDirectory() as d:

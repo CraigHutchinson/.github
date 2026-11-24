@@ -158,7 +158,7 @@ pass that means nothing. So, for every local performance gate and every wall-clo
    exits 0 so it never blocks a push. The state is `ac`, `battery` or `unknown`, plus whether a saver is on; `unknown`
    (a desktop, a runner, a failed query) counts as mains but is reported as unknown.
 2. **The message names the override.** A deferral says why and how to measure anyway
-   (`on battery: performance not measured (deferred; ...). To measure anyway: set SUB0MATH_PERF_ON_BATTERY=1`).
+   (`on battery: performance not measured (deferred; ...). To measure anyway: set SUB0PERF_ON_BATTERY=1`).
 3. **An override is loud and never becomes a baseline.** A run under the override announces it on its first line and in
    its summary, its record carries the power state, and no command that writes a baseline accepts such a record.
    The override set on mains is reported as ignored, so a stale export is noticed.
@@ -180,8 +180,8 @@ Conventions, shared by every repository (they are the shared gate's names, in Su
 |---|---|
 | ctest label `timing` | Marks every wall-clock test. `ctest -LE timing` is the untimed set |
 | `SKIP timing: <reason>` | What a timing test prints when it does not run, with the reason and the override |
-| `SUB0MATH_PERF_ON_BATTERY=1` | The override: measure on battery anyway. Flagged, and never a baseline |
-| `SUB0MATH_PERF_POWER_STRICT=1` | Strict mode: a push on battery is refused instead of deferred. Off by default |
+| `SUB0PERF_ON_BATTERY=1` | The override: measure on battery anyway. Flagged, and never a baseline |
+| `SUB0PERF_POWER_STRICT=1` | Strict mode: a push on battery is refused instead of deferred. Off by default |
 | `SUB0PERF_FAKE_POWER=ac\|battery\|unknown\|saver` | Replaces the power query. **Tests only**; set anywhere else it is a warning |
 | `bench_check.py power` | Prints the state, the Windows power mode and the switches in effect. Exit 0 on mains, **3 on battery, saver or a throttled machine** (with `--exe` and `--baseline`) |
 
@@ -216,7 +216,7 @@ repository measures time, and none is to be added.
    `python <tooling>/bench_check.py gate --refs-from-stdin` after the tests, with `SUB0PERF_OUTPUT=brief`. The gate reads the pushed
    refs, skips what has nothing to measure, and defers on battery, in a battery saver or on a throttled machine (["Power state"](#power-state)).
    **A deferral exits 0 and stands**: the hook never turns it into a failure and never sets the override.
-   `<tooling>` is the Sub0Perf tooling directory the configure step recorded in `<builddir>/sub0math_tooling_dir.txt`. A preset's
+   `<tooling>` is the Sub0Perf tooling directory the configure step recorded in `<builddir>/sub0perf_tooling_dir.txt`. A preset's
    build directory is `build/<preset>`, so the stanza uses `SUB0PERF_TOOLING_DIR` if set, else the newest record under `build*/` and
    `build/*/`; with neither it says the gate was skipped (and does not block). `hook_check.py` searches the same places.
 
@@ -230,11 +230,11 @@ repository measures time, and none is to be added.
 2. **The release check.** The `full` level of `.ci/local.json` has a perf step marked `"timing": true`. `local_ci.py` skips a
    timing step with the note `untimed (on battery)` under the same power logic, so the attestation says what it did not measure. The
    step may name a `"perf_outcome"` file; `local_ci.py` folds that sub0perf outcome into the status description.
-   `{sub0math_tooling}` in its commands expands to the recorded tooling directory:
+   `{sub0perf_tooling}` in its commands expands to the recorded tooling directory (the pre-rename `{sub0math_tooling}`, `sub0math_tooling_dir.txt` and `SUB0MATH_PERF_*` names are still accepted for one release):
 
    ```json
    {"name": "perf", "timing": true, "perf_outcome": "{builddir}/perf-outcome.json",
-    "commands": [["{python}", "{sub0math_tooling}/bench_check.py", "gate", "--level", "full",
+    "commands": [["{python}", "{sub0perf_tooling}/bench_check.py", "gate", "--level", "full",
                   "--out-json", "{builddir}/perf-outcome.json"]]}
    ```
 
@@ -342,7 +342,7 @@ mention that slips past the hook is found by the next local run.
 8. Put deterministic metrics in ctest, labelled `smoke` or `full`, never `timing`. Label a nested consumer-project test `full` until
    it is measured cheap with ccache.
 9. For a repository that gates performance locally: enable the commented perf stanza in `.githooks/pre-push`, mark the release
-   perf step in `.ci/local.json` `"timing": true` (with `perf_outcome`, `--out-json` and `{sub0math_tooling}`), and run
+   perf step in `.ci/local.json` `"timing": true` (with `perf_outcome`, `--out-json` and `{sub0perf_tooling}`), and run
    `hook_check.py`, which then also checks the power guard and that no `pre-push.user` or generated sub0perf hook is tracked.
 10. A library built with GCC-style flags that must also build on Windows: call `cpp-full.yml` with `windows-toolchain: mingw-ucrt`
     instead of a copied MinGW job; pass `test-args: --timeout 600` where a leg needs a ctest timeout.

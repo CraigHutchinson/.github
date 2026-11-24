@@ -24,7 +24,7 @@ A STEP is an object:
                 counted into the status description (default: any command starting with "ctest")
     timing      true: a wall-clock step (a perf gate, a benchmark). Skipped with the note 'untimed (on battery)' when the
                 power state is battery, a battery saver or throttled (the same logic as the `-LE timing` narrowing); it
-                runs normally on mains and under SUB0MATH_PERF_ON_BATTERY=1
+                runs normally on mains and under SUB0PERF_ON_BATTERY=1
     perf_outcome  path (placeholders allowed) of a sub0perf outcome JSON the step writes (schema sub0perf-outcome-1:
                 status, exit, counts, changed[], report, next_action); read after the step and folded into the status
                 description, e.g. 'perf regressed (regressed 1, ok 12)'; --brief prints its report path and next_action
@@ -32,7 +32,8 @@ A STEP is an object:
                 {builddir} build-local-<level>-<step name>   {cc} {cxx} compiler executables
                 {python} this interpreter   {jobs} CPU count   {repo} repository root
                 {ci_dir} the directory holding local_ci.py and its sibling tools (hook_check.py)
-                {sub0math_tooling} the Sub0Math tooling directory, read from <builddir>/sub0math_tooling_dir.txt
+                {sub0perf_tooling} the Sub0Perf tooling directory, read from <builddir>/sub0perf_tooling_dir.txt
+                ({sub0math_tooling} and sub0math_tooling_dir.txt still work for one release)
                 (written at configure time; read when the command runs, so an earlier command of the step may create it)
 
 `--brief` prints one verdict line and then only the failing steps (and a perf step's report and next action), to save tokens;
@@ -46,7 +47,7 @@ Power state (docs/ci-strategy.md, "Power state"): the run starts by printing it.
 timings are not comparable with a mains baseline, so `-LE timing` is added to each plain `ctest` command (an existing
 `-LE` is combined; a `--preset` is left alone, since a command-line filter would replace the preset's own), the
 summary says "untimed (on battery)", and the saved record and the attestation description carry the same words.
-`SUB0MATH_PERF_ON_BATTERY=1` runs everything anyway; the run is then marked "timed on battery (override)".
+`SUB0PERF_ON_BATTERY=1` runs everything anyway; the run is then marked "timed on battery (override)".
 """
 from __future__ import annotations
 
@@ -215,7 +216,9 @@ class StepResult:
     perf: Optional[dict] = None  # a folded sub0perf outcome (see read_perf_outcome)
 
 
-TOOLING_FILE = "sub0math_tooling_dir.txt"
+TOOLING_FILE = "sub0perf_tooling_dir.txt"
+OLD_TOOLING_FILE = "sub0math_tooling_dir.txt"  # the name before the rename; still read, for one release
+PLACEHOLDERS = ("{sub0perf_tooling}", "{sub0math_tooling}")  # the second is the old spelling
 PERF_SCHEMA = "sub0perf-outcome-1"
 QUIET_PERF = ("ok", "pass", "passed", "deferred")  # outcomes --brief does not expand
 
@@ -223,12 +226,14 @@ QUIET_PERF = ("ok", "pass", "passed", "deferred")  # outcomes --brief does not e
 def read_tooling_dir(builddir: Path) -> str:
     """The Sub0Math tooling directory a configure step recorded in <builddir>/sub0math_tooling_dir.txt."""
     path = builddir / TOOLING_FILE
+    if not path.is_file() and (builddir / OLD_TOOLING_FILE).is_file():  # a build configured before the rename
+        path = builddir / OLD_TOOLING_FILE
     try:
         text = path.read_text(encoding="utf-8").strip()
     except OSError as e:
-        raise CiError(f"{{sub0math_tooling}}: cannot read {path} (configure the build first): {e.strerror or e}") from e
+        raise CiError(f"{{sub0perf_tooling}}: cannot read {path} (configure the build first): {e.strerror or e}") from e
     if not text:
-        raise CiError(f"{{sub0math_tooling}}: {path} is empty")
+        raise CiError(f"{{sub0perf_tooling}}: {path} is empty")
     return text
 
 
@@ -317,15 +322,15 @@ def run_step(step: Step, level: str, repo: Path, compilers: dict, dry_run: bool 
     print(f"== {step.name}" + (f" [{comp.version}]" if comp else ""), flush=True)
     for command in step.commands:
         argv = expand(command, values)
-        if any("{sub0math_tooling}" in a for a in argv):
+        if any(ph in a for a in argv for ph in PLACEHOLDERS):
             try:
                 tooling = read_tooling_dir(repo / values["builddir"])
             except CiError as e:
                 if not dry_run:
                     result.status, result.note = "failed", str(e)
                     break
-                tooling = "<sub0math_tooling>"
-            argv = [a.replace("{sub0math_tooling}", tooling) for a in argv]
+                tooling = "<sub0perf_tooling>"
+            argv = [a.replace(PLACEHOLDERS[0], tooling).replace(PLACEHOLDERS[1], tooling) for a in argv]
         if untimed:
             narrowed = exclude_timing(argv)
             if narrowed:
