@@ -9,8 +9,8 @@ being checked carries it (in-tree, or through the tooling directory its configur
 below answers, with the same states and the same environment variables:
 
     SUB0PERF_FAKE_POWER=ac|battery|unknown|saver   replaces the query; for tests only (`saver` is mains with the saver on)
-    SUB0MATH_PERF_ON_BATTERY=1                     measure on battery anyway (the run is flagged, never a baseline)
-    SUB0MATH_PERF_POWER_STRICT=1                   fail instead of deferring
+    SUB0PERF_ON_BATTERY=1                          measure on battery anyway (the run is flagged, never a baseline)
+    SUB0PERF_POWER_STRICT=1                        fail instead of deferring
 
 Standard library only; Windows, Linux and macOS.
 """
@@ -27,9 +27,10 @@ from typing import Optional
 
 AC, BATTERY, UNKNOWN = "ac", "battery", "unknown"
 FAKE_VAR = "SUB0PERF_FAKE_POWER"
-OVERRIDE_VAR = "SUB0MATH_PERF_ON_BATTERY"
-STRICT_VAR = "SUB0MATH_PERF_POWER_STRICT"
-SWITCH_VARS = (FAKE_VAR, OVERRIDE_VAR, STRICT_VAR)
+OVERRIDE_VAR = "SUB0PERF_ON_BATTERY"  # the name before the rename (SUB0MATH_PERF_ON_BATTERY) is read too, for one release
+STRICT_VAR = "SUB0PERF_POWER_STRICT"  # likewise SUB0MATH_PERF_POWER_STRICT
+OLD_NAMES = {OVERRIDE_VAR: "SUB0MATH_PERF_ON_BATTERY", STRICT_VAR: "SUB0MATH_PERF_POWER_STRICT"}
+SWITCH_VARS = (FAKE_VAR, OVERRIDE_VAR, STRICT_VAR, *OLD_NAMES.values())
 UNTIMED_LABEL = "untimed (on battery)"
 
 
@@ -59,8 +60,13 @@ def truthy(value) -> bool:
     return str(value or "").strip().lower() not in ("", "0", "false", "no", "off")
 
 
+def _either(environ: dict, name: str) -> Optional[str]:
+    """The value of `name` or, when it is not set, of its pre-rename spelling."""
+    return environ.get(name) or environ.get(OLD_NAMES.get(name, ""))
+
+
 def override(environ: Optional[dict] = None) -> bool:
-    return truthy((os.environ if environ is None else environ).get(OVERRIDE_VAR))
+    return truthy(_either(os.environ if environ is None else environ, OVERRIDE_VAR))
 
 
 def switches_set(environ: Optional[dict] = None) -> list[str]:
@@ -140,9 +146,10 @@ def fake(value: str) -> PowerState:
 
 def _tooling_candidates(repo: Path) -> list[Path]:
     """Directories that may hold the sub0perf package: the repository's own tools/perf, then the recorded tooling directories
-    (`<builddir>/sub0math_tooling_dir.txt` under build*/ and build/*/, newest first)."""
+    (`<builddir>/sub0perf_tooling_dir.txt`, or the old `sub0math_tooling_dir.txt`, under build*/ and build/*/, newest first)."""
     found = [repo / "tools" / "perf"]
-    records = sorted([*repo.glob("build*/sub0math_tooling_dir.txt"), *repo.glob("build/*/sub0math_tooling_dir.txt")],
+    records = sorted([p for name in ("sub0perf_tooling_dir.txt", "sub0math_tooling_dir.txt")
+                      for p in (*repo.glob(f"build*/{name}"), *repo.glob(f"build/*/{name}"))],
                      key=lambda p: p.stat().st_mtime, reverse=True)
     for record in records:
         try:

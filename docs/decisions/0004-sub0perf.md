@@ -59,3 +59,7 @@ Sub0Math, and the tooling has outgrown that decision.
   serial measurements.
 - Decide whether `wasm_gate.py` and `tools/provenance/` move to this repository's `tools/ci` (decision 7).
 - Set this ADR to Accepted once the Sub0Perf repository is green and Sub0Math consumes it.
+
+## Follow-up: the rename (2026-11-24)
+
+Decision 2 deferred the rename. It is under way as plan item 7.4: `sub0perf_*` functions, `SUB0PERF_*` variables and `sub0perf_tooling_dir.txt` are the names; the old ones are read as fallbacks for one release (functions forward with a CMake `DEPRECATION` message; environment variables are aliased quietly). This repository accepts either name in `ci_power.py`, `hook_check.py`, `local_ci.py` and `templates/pre-push`. Each consumer moves in its own PR, then the fallbacks are dropped.

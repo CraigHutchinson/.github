@@ -17,7 +17,7 @@ See docs/ci-strategy.md, "Local gates must self-test". Checks, each a row of a p
     power guard     where a hook uses the shared perf gate (`bench_check.py`), the gate supports the power-state guard:
                     `bench_check.py power` runs and exits 0 (mains) or 3 (battery or battery saver); any other result
                     means an older gate that would time on battery. Also a WARN for each power switch set in the
-                    environment (SUB0PERF_FAKE_POWER, SUB0MATH_PERF_ON_BATTERY, SUB0MATH_PERF_POWER_STRICT: tests and
+                    environment (SUB0PERF_FAKE_POWER, SUB0PERF_ON_BATTERY, SUB0PERF_POWER_STRICT: tests and
                     deliberate overrides only, never left on)
     tracked hooks   with `core.hooksPath` inside the worktree (a committed hooks directory), no tracked file there may be
                     machine-local or generated: a `pre-push.user` (the per-clone hook a generated gate runs first) or a
@@ -368,7 +368,8 @@ def hook_texts(repo: Path, active: Optional[Path]) -> list[str]:
     return texts
 
 
-TOOLING_FILE = "sub0math_tooling_dir.txt"
+TOOLING_FILE = "sub0perf_tooling_dir.txt"
+OLD_TOOLING_FILE = "sub0math_tooling_dir.txt"  # the name before the rename; still written for one release
 TOOLING_ENV = "SUB0PERF_TOOLING_DIR"
 
 
@@ -379,7 +380,7 @@ def tooling_dirs(repo: Path, environ: Optional[dict] = None) -> list[Path]:
     found: list[Path] = []
     if environ.get(TOOLING_ENV, "").strip():
         found.append(Path(environ[TOOLING_ENV].strip()))
-    records = [p for pattern in (f"build*/{TOOLING_FILE}", f"build/*/{TOOLING_FILE}") for p in repo.glob(pattern)]
+    records = [p for name in (TOOLING_FILE, OLD_TOOLING_FILE) for pattern in (f"build*/{name}", f"build/*/{name}") for p in repo.glob(pattern)]
     for record in sorted(set(records), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             found.append(Path(record.read_text(encoding="utf-8").strip()))
@@ -427,7 +428,7 @@ def check_power_switches(environ: Optional[dict] = None) -> list[Row]:
     found = ci_power.switches_set(environ)
     return [Row(WARN, "power switches", f"{item} is set in the environment: " +
                 ("the power state is faked (tests only)" if item.startswith(ci_power.FAKE_VAR) else
-                 "timing on battery is allowed (a deliberate override only)" if item.startswith(ci_power.OVERRIDE_VAR) else
+                 "timing on battery is allowed (a deliberate override only)" if item.startswith((ci_power.OVERRIDE_VAR, ci_power.OLD_NAMES[ci_power.OVERRIDE_VAR])) else
                  "a push on battery is refused instead of deferred") + "; unset it unless this is deliberate")
             for item in found]
 
