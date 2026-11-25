@@ -154,19 +154,19 @@ class EmptyPushTests(RepoCase):
 
     def test_runs_in_the_repository_with_empty_stdin_and_a_clean_environment(self):
         path = self.write_hook('#!/bin/sh\nrefs="$(cat)"\n[ -z "$refs" ] || exit 4\n[ -d .git ] || exit 5\n'
-                               '[ -z "$SUB0MATH_PERF_SKIP" ] || exit 6\n[ -z "$GIT_DIR" ] || exit 7\nexit 0\n')
+                               '[ -z "$SUB0PERF_SKIP" ] || exit 6\n[ -z "$GIT_DIR" ] || exit 7\nexit 0\n')
         self.need_shell(path)
-        os.environ["SUB0MATH_PERF_SKIP"] = "x"
+        os.environ["SUB0PERF_SKIP"] = "x"
         os.environ["GIT_DIR"] = "elsewhere"
         try:
             row = hc.run_hook_empty(self.repo, path, 20.0)
         finally:
-            del os.environ["SUB0MATH_PERF_SKIP"]
+            del os.environ["SUB0PERF_SKIP"]
             del os.environ["GIT_DIR"]
         self.assertEqual(row.status, hc.PASS, row.detail)
 
     def test_clean_environment_drops_gate_variables(self):
-        env = hc.clean_environment({"PATH": "/bin", "GIT_DIR": "x", "SUB0MATH_PERF_LEVEL": "full", "X_SKIP": "1", "HOME": "/h"})
+        env = hc.clean_environment({"PATH": "/bin", "GIT_DIR": "x", "SUB0PERF_LEVEL": "full", "X_SKIP": "1", "HOME": "/h"})
         self.assertEqual(env, {"PATH": "/bin", "HOME": "/h"})
 
 
@@ -292,7 +292,7 @@ class TemplateTests(RepoCase):
             "import os, sys\nprint('GATE output=' + os.environ.get('SUB0PERF_OUTPUT', '') + ' args=' + ' '.join(sys.argv[1:]))\n"
             "print('STDIN ' + sys.stdin.read().strip())\n" f"sys.exit({gate_exit})\n", encoding="utf-8")
         (self.repo / "build").mkdir(exist_ok=True)
-        (self.repo / "build" / "sub0math_tooling_dir.txt").write_text(tooling.as_posix())
+        (self.repo / "build" / "sub0perf_tooling_dir.txt").write_text(tooling.as_posix())
         self.hook = self.write_hook(text)
         return text
 
@@ -313,9 +313,9 @@ class TemplateTests(RepoCase):
         self.assertIn("STDIN " + refs, result.stdout)
 
     def move_record(self, relative):
-        """Moves the recorded tooling directory to <relative>/sub0math_tooling_dir.txt (a preset's build directory, say)."""
-        old = self.repo / "build" / "sub0math_tooling_dir.txt"
-        new = self.repo / relative / "sub0math_tooling_dir.txt"
+        """Moves the recorded tooling directory to <relative>/sub0perf_tooling_dir.txt (a preset's build directory, say)."""
+        old = self.repo / "build" / "sub0perf_tooling_dir.txt"
+        new = self.repo / relative / "sub0perf_tooling_dir.txt"
         new.parent.mkdir(parents=True, exist_ok=True)
         new.write_text(old.read_text())
         old.unlink()
@@ -344,7 +344,7 @@ class TemplateTests(RepoCase):
         stale = Path(self.tmp.name) / "stale-tooling"
         stale.mkdir()
         (stale / "bench_check.py").write_text("print('STALE')\n", encoding="utf-8")
-        old = self.repo / "build" / "old" / "sub0math_tooling_dir.txt"
+        old = self.repo / "build" / "old" / "sub0perf_tooling_dir.txt"
         old.parent.mkdir(parents=True)
         old.write_text(stale.as_posix())
         os.utime(old, (1, 1))  # long ago: the record written at the start of this test is newer
@@ -355,7 +355,7 @@ class TemplateTests(RepoCase):
     def test_the_environment_variable_names_the_tooling(self):
         self.stanza_hook(0)
         self.commit("b.cpp", "int f() { return 1; }\n")
-        (self.repo / "build" / "sub0math_tooling_dir.txt").unlink()
+        (self.repo / "build" / "sub0perf_tooling_dir.txt").unlink()
         other = Path(self.tmp.name) / "other-tooling"
         other.mkdir()
         (other / "bench_check.py").write_text("print('GATE from env')\nimport sys; sys.stdin.read()\n", encoding="utf-8")
@@ -368,7 +368,7 @@ class TemplateTests(RepoCase):
     def test_no_recorded_tooling_skips_the_gate_with_a_message_and_does_not_block(self):
         self.stanza_hook(1)
         self.commit("b.cpp", "int f() { return 1; }\n")
-        (self.repo / "build" / "sub0math_tooling_dir.txt").unlink()
+        (self.repo / "build" / "sub0perf_tooling_dir.txt").unlink()
         result = self.push(self.refs())
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("perf gate skipped", result.stdout)
@@ -442,7 +442,7 @@ class PowerSwitchTests(unittest.TestCase):
         self.assertEqual(hc.check_power_switches({}), [])
 
     def test_each_switch_warns(self):
-        env = {"SUB0PERF_FAKE_POWER": "battery", "SUB0MATH_PERF_ON_BATTERY": "1", "SUB0MATH_PERF_POWER_STRICT": "1"}
+        env = {"SUB0PERF_FAKE_POWER": "battery", "SUB0PERF_ON_BATTERY": "1", "SUB0PERF_POWER_STRICT": "1"}
         rows = hc.check_power_switches(env)
         self.assertEqual([r.status for r in rows], [hc.WARN] * 3)
         self.assertIn("faked", rows[0].detail)
@@ -450,7 +450,7 @@ class PowerSwitchTests(unittest.TestCase):
         self.assertIn("refused", rows[2].detail)
 
     def test_the_empty_push_runs_without_the_switches(self):
-        env = hc.clean_environment({"SUB0PERF_FAKE_POWER": "battery", "SUB0MATH_PERF_ON_BATTERY": "1", "PATH": "x"})
+        env = hc.clean_environment({"SUB0PERF_FAKE_POWER": "battery", "SUB0PERF_ON_BATTERY": "1", "PATH": "x"})
         self.assertEqual(env, {"PATH": "x"})
 
 
@@ -466,7 +466,7 @@ previous="$(dirname "$0")/pre-push.user"
 PERF_STANZA_HOOK = """#!/usr/bin/env bash
 set -euo pipefail
 ctest --test-dir build
-tooling="$(cat build/sub0math_tooling_dir.txt)"
+tooling="$(cat build/sub0perf_tooling_dir.txt)"
 SUB0PERF_OUTPUT=brief python "$tooling/bench_check.py" gate --refs-from-stdin
 """
 
@@ -545,7 +545,7 @@ class PerfStanzaGuardTests(RepoCase):
         tooling.mkdir()
         (tooling / "bench_check.py").write_text(FAKE_BENCH_CHECK, encoding="utf-8")
         (self.repo / "build").mkdir()
-        (self.repo / "build" / "sub0math_tooling_dir.txt").write_text(str(tooling))
+        (self.repo / "build" / "sub0perf_tooling_dir.txt").write_text(str(tooling))
         with mock.patch.dict(os.environ):
             os.environ.pop("SUB0PERF_FAKE_POWER", None)
             row = hc.check_power_guard(self.repo, path)[0]

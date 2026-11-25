@@ -33,7 +33,6 @@ A STEP is an object:
                 {python} this interpreter   {jobs} CPU count   {repo} repository root
                 {ci_dir} the directory holding local_ci.py and its sibling tools (hook_check.py)
                 {sub0perf_tooling} the Sub0Perf tooling directory, read from <builddir>/sub0perf_tooling_dir.txt
-                ({sub0math_tooling} and sub0math_tooling_dir.txt still work for one release)
                 (written at configure time; read when the command runs, so an earlier command of the step may create it)
 
 `--brief` prints one verdict line and then only the failing steps (and a perf step's report and next action), to save tokens;
@@ -217,17 +216,14 @@ class StepResult:
 
 
 TOOLING_FILE = "sub0perf_tooling_dir.txt"
-OLD_TOOLING_FILE = "sub0math_tooling_dir.txt"  # the name before the rename; still read, for one release
-PLACEHOLDERS = ("{sub0perf_tooling}", "{sub0math_tooling}")  # the second is the old spelling
+PLACEHOLDER = "{sub0perf_tooling}"
 PERF_SCHEMA = "sub0perf-outcome-1"
 QUIET_PERF = ("ok", "pass", "passed", "deferred")  # outcomes --brief does not expand
 
 
 def read_tooling_dir(builddir: Path) -> str:
-    """The Sub0Math tooling directory a configure step recorded in <builddir>/sub0math_tooling_dir.txt."""
+    """The Sub0Math tooling directory a configure step recorded in <builddir>/sub0perf_tooling_dir.txt."""
     path = builddir / TOOLING_FILE
-    if not path.is_file() and (builddir / OLD_TOOLING_FILE).is_file():  # a build configured before the rename
-        path = builddir / OLD_TOOLING_FILE
     try:
         text = path.read_text(encoding="utf-8").strip()
     except OSError as e:
@@ -322,7 +318,7 @@ def run_step(step: Step, level: str, repo: Path, compilers: dict, dry_run: bool 
     print(f"== {step.name}" + (f" [{comp.version}]" if comp else ""), flush=True)
     for command in step.commands:
         argv = expand(command, values)
-        if any(ph in a for a in argv for ph in PLACEHOLDERS):
+        if any(PLACEHOLDER in a for a in argv):
             try:
                 tooling = read_tooling_dir(repo / values["builddir"])
             except CiError as e:
@@ -330,7 +326,7 @@ def run_step(step: Step, level: str, repo: Path, compilers: dict, dry_run: bool 
                     result.status, result.note = "failed", str(e)
                     break
                 tooling = "<sub0perf_tooling>"
-            argv = [a.replace(PLACEHOLDERS[0], tooling).replace(PLACEHOLDERS[1], tooling) for a in argv]
+            argv = [a.replace(PLACEHOLDER, tooling) for a in argv]
         if untimed:
             narrowed = exclude_timing(argv)
             if narrowed:
