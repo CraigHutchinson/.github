@@ -193,10 +193,10 @@ class PowerTests(unittest.TestCase):
 
     def test_switches_set(self):
         self.assertEqual(lc.ci_power.switches_set({}), [])
-        self.assertEqual(lc.ci_power.switches_set({"SUB0MATH_PERF_ON_BATTERY": "1"}), ["SUB0MATH_PERF_ON_BATTERY=1"])
+        self.assertEqual(lc.ci_power.switches_set({"SUB0PERF_ON_BATTERY": "1"}), ["SUB0PERF_ON_BATTERY=1"])
         self.assertEqual(lc.ci_power.switches_set({"SUB0PERF_ON_BATTERY": "1"}), ["SUB0PERF_ON_BATTERY=1"])
         self.assertTrue(lc.ci_power.override({"SUB0PERF_ON_BATTERY": "1"}))
-        self.assertTrue(lc.ci_power.override({"SUB0MATH_PERF_ON_BATTERY": "1"}))
+        self.assertTrue(lc.ci_power.override({"SUB0PERF_ON_BATTERY": "1"}))
         self.assertFalse(lc.ci_power.override({}))
 
     def test_exclude_timing(self):
@@ -226,8 +226,8 @@ class PowerTests(unittest.TestCase):
         self.assertEqual(lc.power_mark(self.AC), "")
         self.assertEqual(lc.power_mark(self.BATTERY, {}), "untimed (on battery)")
         self.assertEqual(lc.power_mark(self.SAVER, {}), "untimed (on battery)")
-        self.assertEqual(lc.power_mark(self.BATTERY, {"SUB0MATH_PERF_ON_BATTERY": "1"}), "timed on battery (override)")
-        self.assertEqual(lc.power_mark(self.AC, {"SUB0MATH_PERF_ON_BATTERY": "1"}), "")  # ignored on mains
+        self.assertEqual(lc.power_mark(self.BATTERY, {"SUB0PERF_ON_BATTERY": "1"}), "timed on battery (override)")
+        self.assertEqual(lc.power_mark(self.AC, {"SUB0PERF_ON_BATTERY": "1"}), "")  # ignored on mains
 
     def test_description_carries_the_mark_even_when_truncated(self):
         rs = [lc.StepResult(f"step-{i}-" + "x" * 20, "passed", "GCC 16", (1, 1)) for i in range(10)]
@@ -280,8 +280,8 @@ class ToolingPlaceholderTests(unittest.TestCase):
             repo = Path(d)
             b = repo / "build-local-quick-s"
             b.mkdir()
-            (b / "sub0math_tooling_dir.txt").write_text("/deps/Sub0Math/tools/perf\n")
-            step = lc.Step("s", [["{python}", "{sub0math_tooling}/bench_check.py", "gate"]])
+            (b / "sub0perf_tooling_dir.txt").write_text("/deps/Sub0Math/tools/perf\n")
+            step = lc.Step("s", [["{python}", "{sub0perf_tooling}/bench_check.py", "gate"]])
             seen = []
             r = lc.run_step(step, "quick", repo, {}, runner=lambda argv, cwd, env: seen.append(argv) or (0, ""))
             self.assertEqual(r.status, "passed")
@@ -306,15 +306,15 @@ class ToolingPlaceholderTests(unittest.TestCase):
             b.mkdir()
             (b / "sub0perf_tooling_dir.txt").write_text("T\n")
             seen = []
-            lc.run_step(lc.Step("s", [["{sub0math_tooling}/x.py"]]), "quick", repo, {}, runner=lambda argv, cwd, env: seen.append(argv) or (0, ""))
+            lc.run_step(lc.Step("s", [["{sub0perf_tooling}/x.py"]]), "quick", repo, {}, runner=lambda argv, cwd, env: seen.append(argv) or (0, ""))
             (b / "sub0perf_tooling_dir.txt").unlink()
-            (b / "sub0math_tooling_dir.txt").write_text("U\n")
+            (b / "sub0perf_tooling_dir.txt").write_text("U\n")
             lc.run_step(lc.Step("s", [["{sub0perf_tooling}/x.py"]]), "quick", repo, {}, runner=lambda argv, cwd, env: seen.append(argv) or (0, ""))
             self.assertEqual([a[0] for a in seen], ["T/x.py", "U/x.py"])
 
     def test_missing_file_fails_the_step_with_a_hint(self):
         with tempfile.TemporaryDirectory() as d:
-            step = lc.Step("s", [["{sub0math_tooling}/x.py"]])
+            step = lc.Step("s", [["{sub0perf_tooling}/x.py"]])
             seen = []
             r = lc.run_step(step, "quick", Path(d), {}, runner=lambda *a: seen.append(a) or (0, ""))
             self.assertEqual(r.status, "failed")
@@ -324,21 +324,21 @@ class ToolingPlaceholderTests(unittest.TestCase):
     def test_created_by_an_earlier_command_of_the_same_step(self):
         with tempfile.TemporaryDirectory() as d:
             repo = Path(d)
-            step = lc.Step("s", [["configure"], ["{sub0math_tooling}/x.py"]])
+            step = lc.Step("s", [["configure"], ["{sub0perf_tooling}/x.py"]])
             seen = []
 
             def run(argv, cwd, env):
                 seen.append(argv)
                 if argv == ["configure"]:
                     (repo / "build-local-quick-s").mkdir()
-                    (repo / "build-local-quick-s" / "sub0math_tooling_dir.txt").write_text("T")
+                    (repo / "build-local-quick-s" / "sub0perf_tooling_dir.txt").write_text("T")
                 return 0, ""
             self.assertEqual(lc.run_step(step, "quick", repo, {}, runner=run).status, "passed")
             self.assertEqual(seen[1], ["T/x.py"])
 
     def test_dry_run_does_not_need_the_file(self):
         with tempfile.TemporaryDirectory() as d:
-            step = lc.Step("s", [["{sub0math_tooling}/x.py"]])
+            step = lc.Step("s", [["{sub0perf_tooling}/x.py"]])
             self.assertEqual(lc.run_step(step, "quick", Path(d), {}, dry_run=True).status, "passed")
 
 

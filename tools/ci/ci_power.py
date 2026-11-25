@@ -5,7 +5,7 @@ See docs/ci-strategy.md, "Power state". States: `ac`, `battery`, `unknown` (a de
 
 Duplication note: Sub0Perf's shared perf gate has the same module (tools/perf/sub0perf/power.py). When the repository
 being checked carries it (in-tree, or through the tooling directory its configure step recorded in
-<builddir>/sub0math_tooling_dir.txt, where Sub0Perf lives after a CPM download), `power_state(repo)` uses it, so the two cannot disagree. Otherwise the self-contained fallback
+<builddir>/sub0perf_tooling_dir.txt, where Sub0Perf lives after a CPM download), `power_state(repo)` uses it, so the two cannot disagree. Otherwise the self-contained fallback
 below answers, with the same states and the same environment variables:
 
     SUB0PERF_FAKE_POWER=ac|battery|unknown|saver   replaces the query; for tests only (`saver` is mains with the saver on)
@@ -27,10 +27,9 @@ from typing import Optional
 
 AC, BATTERY, UNKNOWN = "ac", "battery", "unknown"
 FAKE_VAR = "SUB0PERF_FAKE_POWER"
-OVERRIDE_VAR = "SUB0PERF_ON_BATTERY"  # the name before the rename (SUB0MATH_PERF_ON_BATTERY) is read too, for one release
-STRICT_VAR = "SUB0PERF_POWER_STRICT"  # likewise SUB0MATH_PERF_POWER_STRICT
-OLD_NAMES = {OVERRIDE_VAR: "SUB0MATH_PERF_ON_BATTERY", STRICT_VAR: "SUB0MATH_PERF_POWER_STRICT"}
-SWITCH_VARS = (FAKE_VAR, OVERRIDE_VAR, STRICT_VAR, *OLD_NAMES.values())
+OVERRIDE_VAR = "SUB0PERF_ON_BATTERY"
+STRICT_VAR = "SUB0PERF_POWER_STRICT"
+SWITCH_VARS = (FAKE_VAR, OVERRIDE_VAR, STRICT_VAR)
 UNTIMED_LABEL = "untimed (on battery)"
 
 
@@ -60,13 +59,8 @@ def truthy(value) -> bool:
     return str(value or "").strip().lower() not in ("", "0", "false", "no", "off")
 
 
-def _either(environ: dict, name: str) -> Optional[str]:
-    """The value of `name` or, when it is not set, of its pre-rename spelling."""
-    return environ.get(name) or environ.get(OLD_NAMES.get(name, ""))
-
-
 def override(environ: Optional[dict] = None) -> bool:
-    return truthy(_either(os.environ if environ is None else environ, OVERRIDE_VAR))
+    return truthy((os.environ if environ is None else environ).get(OVERRIDE_VAR))
 
 
 def switches_set(environ: Optional[dict] = None) -> list[str]:
@@ -146,9 +140,9 @@ def fake(value: str) -> PowerState:
 
 def _tooling_candidates(repo: Path) -> list[Path]:
     """Directories that may hold the sub0perf package: the repository's own tools/perf, then the recorded tooling directories
-    (`<builddir>/sub0perf_tooling_dir.txt`, or the old `sub0math_tooling_dir.txt`, under build*/ and build/*/, newest first)."""
+    (`<builddir>/sub0perf_tooling_dir.txt` under build*/ and build/*/, newest first)."""
     found = [repo / "tools" / "perf"]
-    records = sorted([p for name in ("sub0perf_tooling_dir.txt", "sub0math_tooling_dir.txt")
+    records = sorted([p for name in ("sub0perf_tooling_dir.txt",)
                       for p in (*repo.glob(f"build*/{name}"), *repo.glob(f"build/*/{name}"))],
                      key=lambda p: p.stat().st_mtime, reverse=True)
     for record in records:

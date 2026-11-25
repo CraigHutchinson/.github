@@ -46,7 +46,7 @@ on:
         type: string
         default: g++-14 ninja-build ccache
       extra-cmake-args:
-        description: Extra configure arguments, e.g. -DMYLIB_WARNINGS_AS_ERRORS=ON -DSUB0MATH_PERF_ON_BUILD=OFF
+        description: Extra configure arguments, e.g. -DMYLIB_WARNINGS_AS_ERRORS=ON -DSUB0PERF_ON_BUILD=OFF
         type: string
         default: ""
       cpm-cache-key-files:

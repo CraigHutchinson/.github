@@ -66,14 +66,14 @@ fi
 # runs the gate with them. Do not also add the chain line `install-hooks` prints for a tracked directory: that line runs a copy
 # that reads all of stdin first, and the loop above would then see no refs. (The chain line is for a committed hook that does not
 # read stdin, or for an untracked .git/hooks; `bench_check.py selftest` accepts either wiring.)
-# The configure step records the tooling directory in <builddir>/sub0perf_tooling_dir.txt (sub0math_tooling_dir.txt before the rename), and the builddir of a preset is
+# The configure step records the tooling directory in <builddir>/sub0perf_tooling_dir.txt, and the builddir of a preset is
 # build/<preset>, so the newest record under build*/ and build/*/ is used; SUB0PERF_TOOLING_DIR overrides it. The gate prints
 # one brief line (SUB0PERF_OUTPUT=brief; details are in the report path it names) and decides itself what to skip. A deferral
 # (battery, battery saver, throttled machine) exits 0 and STANDS: never turn the gate's message into a failure, and never set
 # SUB0PERF_ON_BATTERY here.
 # tooling="${SUB0PERF_TOOLING_DIR:-}"
 # if [ -z "$tooling" ]; then
-#     for record in $(ls -t build*/sub0perf_tooling_dir.txt build/*/sub0perf_tooling_dir.txt build*/sub0math_tooling_dir.txt build/*/sub0math_tooling_dir.txt 2>/dev/null); do
+#     for record in $(ls -t build*/sub0perf_tooling_dir.txt build/*/sub0perf_tooling_dir.txt 2>/dev/null); do
 #         tooling="$(cat "$record")"; break
 #     done
 # fi
