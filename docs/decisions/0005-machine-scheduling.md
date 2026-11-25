@@ -1,6 +1,6 @@
 # 0005: Machine-wide scheduling of timed and system-holding work
 
-- **Status:** Proposed (2026-11-25, revised the same day with the answers to its open questions); the owner accepts or changes it. Nothing in Sub0Perf issue 3 steps 2-6 or issue 8 is built before it is accepted.
+- **Status:** Accepted (2026-11-25)
 - **Owner:** Craig Hutchinson
 - **Relates to:** [ADR 0004](0004-sub0perf.md); Sub0Perf issues 3, 4, 7 and 8; Sub0Platform issues 1 and 2; Sub0LlmEngine `supervision/machine_lease` and its family responsibilities review (decision D4, serving and timing, approved 2026-11-24)
 
@@ -12,7 +12,7 @@ system (cores, memory bandwidth, GPU) while it runs. Today there are two blunt, 
 with an owner record `pid`, `time`, `what`, `tool` beside it). They do not see each other, and concurrent gates in different repositories disturbed
 one another's measurements twice on 2026-11-25 (false confirmed regressions). Every project either waits for everything or risks a bad measurement.
 
-## Decision (proposed)
+## Decision
 
 1. **One lease, owned by Sub0Platform as mechanism, used by Sub0Perf as policy.** This was already decided in the family review (D4) and in
    Sub0Platform issue 2; this ADR records it. Sub0Platform gets a `lease` module (Python and C++) that lifts the engine's implementation: a per-user
@@ -61,7 +61,7 @@ one another's measurements twice on 2026-11-25 (false confirmed regressions). Ev
 - Sub0Perf stays standard-library Python over Sub0Platform mechanism; implementing the scheduler on Sub0Fabric or Sub0Log would invert the stack
   and is a separate ADR, to be decided once real consumers have used the interface.
 
-## Decisions taken from the open questions (2026-11-25, recommended to the owner)
+## Decisions taken from the open questions (2026-11-25)
 
 1. The lease is Sub0Platform's (the review's D4, already approved), not a convention each consumer implements.
 2. `--wait` is on by default, bounded: interactive commands wait up to 15 minutes, the pre-push gate up to 120 s and then defers; `--no-wait` and
