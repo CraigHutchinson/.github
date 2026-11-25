@@ -61,9 +61,13 @@ on:
         type: string
         default: ""
       macos:
-        description: macos-14 leg (billed at 10x on private repositories)
+        description: macOS leg (billed at 10x on private repositories)
         type: boolean
         default: false
+      macos-runner:
+        description: GitHub-hosted macOS runner label for the Apple Clang leg
+        type: string
+        default: macos-15
       sanitizers:
         description: ASan+UBSan leg
         type: boolean
@@ -333,7 +337,7 @@ jobs:
       && (vars.CI_MODE != 'smoke' || startsWith(github.ref, 'refs/tags/v'))
       && !contains(github.event.pull_request.labels.*.name, 'ci:skip') }}
     name: macos (Apple Clang)
-    runs-on: macos-14
+    runs-on: ${{ inputs.macos-runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
       - uses: actions/checkout@v4
